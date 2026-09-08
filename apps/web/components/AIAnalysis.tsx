@@ -361,9 +361,9 @@ export default function AIAnalysis() {
                             {[1, 2, 4, 8, 24].map(h => (
                               <tr key={h}>
                                 <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{h} jam</td>
-                                <td style={{ color: '#fca5a5', fontWeight: 600 }}>{money.format(result.total_hourly_loss * h)}</td>
+                                <td style={{ color: 'var(--text-danger)', fontWeight: 600 }}>{money.format(result.total_hourly_loss * h)}</td>
                                 <td style={{ color: 'var(--yellow)', fontWeight: 600 }}>{money.format(result.total_sla_penalty * h)}</td>
-                                <td style={{ color: '#fca5a5', fontWeight: 800 }}>{money.format((result.total_hourly_loss + result.total_sla_penalty) * h)}</td>
+                                <td style={{ color: 'var(--text-danger)', fontWeight: 800 }}>{money.format((result.total_hourly_loss + result.total_sla_penalty) * h)}</td>
                               </tr>
                             ))}
                           </tbody>

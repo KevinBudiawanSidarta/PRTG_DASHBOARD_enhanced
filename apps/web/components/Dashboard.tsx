@@ -237,13 +237,69 @@ export default function Dashboard() {
 }
 
 // ─── Tab: Live Monitoring ─────────────────────────────────────────────────────
+// ─── Helpers for Pagination ──────────────────────────────────────────────────
+function getPaginationRange(current: number, total: number): (number | string)[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  if (current <= 4) {
+    return [1, 2, 3, 4, 5, '...', total];
+  }
+  if (current >= total - 3) {
+    return [1, '...', total - 4, total - 3, total - 2, total - 1, total];
+  }
+  return [1, '...', current - 1, current, current + 1, '...', total];
+}
+
+// ─── Tab: Live Monitoring ─────────────────────────────────────────────────────
 function MonitoringTab({ sensors, events, loading, onRefresh }: {
   sensors: Sensor[]; events: TechEvent[]; loading: boolean; onRefresh: () => void;
 }) {
-  const up      = sensors.filter(s => s.last_known_state === 'up').length;
-  const down    = sensors.filter(s => s.last_known_state === 'down').length;
-  const warning = sensors.filter(s => s.last_known_state === 'warning').length;
-  const unknown = sensors.filter(s => !['up','down','warning'].includes(s.last_known_state)).length;
+  const [filterState, setFilterState] = useState<'all' | 'up' | 'down' | 'unknown' | 'warning'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 20; // 4 baris × 5 kolom = 20 sensor per halaman
+
+  const up      = useMemo(() => sensors.filter(s => s.last_known_state === 'up').length, [sensors]);
+  const down    = useMemo(() => sensors.filter(s => s.last_known_state === 'down').length, [sensors]);
+  const warning = useMemo(() => sensors.filter(s => s.last_known_state === 'warning').length, [sensors]);
+  const unknown = useMemo(() => sensors.filter(s => !['up','down','warning'].includes(s.last_known_state)).length, [sensors]);
+
+  // Reset page when filter or search changes
+  useEffect(() => {
+    setPage(1);
+  }, [filterState, searchQuery]);
+
+  const filteredSensors = useMemo(() => {
+    return sensors.filter(s => {
+      // Status filter
+      if (filterState === 'up' && s.last_known_state !== 'up') return false;
+      if (filterState === 'down' && s.last_known_state !== 'down') return false;
+      if (filterState === 'warning' && s.last_known_state !== 'warning') return false;
+      if (filterState === 'unknown' && ['up','down','warning'].includes(s.last_known_state)) return false;
+
+      // Search query filter
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchDev = (s.device_name || '').toLowerCase().includes(q);
+        const matchSen = (s.sensor_name || '').toLowerCase().includes(q);
+        const matchId  = (s.prtg_sensor_id || '').toLowerCase().includes(q);
+        if (!matchDev && !matchSen && !matchId) return false;
+      }
+      return true;
+    });
+  }, [sensors, filterState, searchQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredSensors.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const paginatedSensors = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredSensors.slice(start, start + PAGE_SIZE);
+  }, [filteredSensors, currentPage]);
+
+  const pageRange = useMemo(() => {
+    return getPaginationRange(currentPage, totalPages);
+  }, [currentPage, totalPages]);
 
   return (
     <>
@@ -254,41 +310,190 @@ function MonitoringTab({ sensors, events, loading, onRefresh }: {
       </div>
 
       <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4,1fr)', marginBottom: 20 }}>
-        <KpiCard label="Total Sensors"  value={sensors.length} icon="📡" meta="Terdaftar di sistem" />
-        <KpiCard label="Operational"    value={up}      icon="✅" meta="Status UP" cls="success" />
-        <KpiCard label="Down"           value={down}    icon="🔴" meta="Perlu perhatian segera" cls={down > 0 ? 'danger' : ''} />
-        <KpiCard label="Warning"        value={warning} icon="⚠️" meta="Status degraded" />
+        <div onClick={() => setFilterState('all')} style={{ cursor: 'pointer' }} title="Klik untuk tampilkan semua sensor">
+          <KpiCard label="Total Sensors"  value={sensors.length} icon="📡" meta={filterState === 'all' ? '● Aktif difilter' : 'Klik untuk filter'} />
+        </div>
+        <div onClick={() => setFilterState('up')} style={{ cursor: 'pointer' }} title="Klik untuk filter: Sensor Aktif (UP)">
+          <KpiCard label="Operational (UP)" value={up} icon="✅" meta={filterState === 'up' ? '● Aktif difilter' : 'Klik untuk filter'} cls="success" />
+        </div>
+        <div onClick={() => setFilterState('down')} style={{ cursor: 'pointer' }} title="Klik untuk filter: Sensor DOWN">
+          <KpiCard label="Down" value={down} icon="🔴" meta={filterState === 'down' ? '● Aktif difilter' : 'Perlu perhatian'} cls={down > 0 ? 'danger' : ''} />
+        </div>
+        <div onClick={() => setFilterState('unknown')} style={{ cursor: 'pointer' }} title="Klik untuk filter: Sensor UNKNOWN">
+          <KpiCard label="Unknown" value={unknown} icon="⚪" meta={filterState === 'unknown' ? '● Aktif difilter' : 'Klik untuk filter'} />
+        </div>
       </div>
 
       <div className="content-grid">
         <div className="panel" id="sensor-grid-panel">
-          <div className="panel-header">
+          <div className="panel-header" style={{ flexWrap: 'wrap', gap: 12 }}>
             <div>
               <div className="panel-title">Sensor Grid</div>
-              <div className="panel-sub">{sensors.length} sensors dari PRTG</div>
+              <div className="panel-sub">
+                {filteredSensors.length} dari {sensors.length} sensors {filterState !== 'all' && `[Filter: ${filterState.toUpperCase()}]`}
+              </div>
             </div>
-            <button className="btn sm" onClick={onRefresh} id="refresh-sensors-btn">
-              {loading ? '⟳ Loading…' : '⟳ Refresh'}
-            </button>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button className="btn sm" onClick={onRefresh} id="refresh-sensors-btn">
+                {loading ? '⟳ Loading…' : '⟳ Refresh'}
+              </button>
+            </div>
           </div>
 
+          {/* Filter Bar */}
+          <div className="sensor-filter-bar">
+            <div className="sensor-filter-chips">
+              <button
+                className={`filter-chip ${filterState === 'all' ? 'active' : ''}`}
+                onClick={() => setFilterState('all')}
+                id="filter-all-chip"
+              >
+                <span>🌐 Semua</span>
+                <span className="filter-chip-count">{sensors.length}</span>
+              </button>
+              <button
+                className={`filter-chip up ${filterState === 'up' ? 'active' : ''}`}
+                onClick={() => setFilterState('up')}
+                id="filter-up-chip"
+              >
+                <span>✅ Aktif (UP)</span>
+                <span className="filter-chip-count">{up}</span>
+              </button>
+              <button
+                className={`filter-chip down ${filterState === 'down' ? 'active' : ''}`}
+                onClick={() => setFilterState('down')}
+                id="filter-down-chip"
+              >
+                <span>🔴 Down</span>
+                <span className="filter-chip-count">{down}</span>
+              </button>
+              <button
+                className={`filter-chip unknown ${filterState === 'unknown' ? 'active' : ''}`}
+                onClick={() => setFilterState('unknown')}
+                id="filter-unknown-chip"
+              >
+                <span>⚪ Unknown</span>
+                <span className="filter-chip-count">{unknown}</span>
+              </button>
+              {warning > 0 && (
+                <button
+                  className={`filter-chip warning ${filterState === 'warning' ? 'active' : ''}`}
+                  onClick={() => setFilterState('warning')}
+                  id="filter-warning-chip"
+                >
+                  <span>⚠️ Warning</span>
+                  <span className="filter-chip-count">{warning}</span>
+                </button>
+              )}
+            </div>
+
+            <div className="sensor-search-box">
+              <input
+                type="text"
+                className="form-input"
+                placeholder="🔍 Cari device / sensor..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                style={{ width: 220, padding: '6px 10px', fontSize: 12 }}
+                id="search-sensor-input"
+              />
+              {searchQuery && (
+                <button
+                  className="search-clear-btn"
+                  onClick={() => setSearchQuery('')}
+                  title="Clear search"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Sensor Grid (4 rows x 5 columns) */}
           {loading && sensors.length === 0 ? (
             <div className="sensor-grid">
-              {[...Array(8)].map((_, i) => (
-                <div key={i} style={{ height: 110, borderRadius: 'var(--radius-sm)' }} className="skeleton" />
+              {[...Array(20)].map((_, i) => (
+                <div key={i} style={{ height: 105, borderRadius: 'var(--radius-sm)' }} className="skeleton" />
               ))}
             </div>
-          ) : sensors.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">📡</div>
-              <p>Belum ada sensor terdaftar.<br />Tambahkan mapping sensor dari tab Service Mapping.</p>
+          ) : filteredSensors.length === 0 ? (
+            <div className="empty-state" style={{ padding: 48 }}>
+              <div className="empty-icon">🔍</div>
+              <p>Tidak ada sensor yang cocok dengan filter {filterState !== 'all' ? `"${filterState.toUpperCase()}"` : ''} {searchQuery ? `atau pencarian "${searchQuery}"` : ''}.</p>
+              <button className="btn sm" onClick={() => { setFilterState('all'); setSearchQuery(''); }} style={{ marginTop: 8 }}>
+                Reset Filter
+              </button>
             </div>
           ) : (
-            <div className="sensor-grid">
-              {sensors.map(s => (
-                <SensorCard key={s.id} sensor={s} />
-              ))}
-            </div>
+            <>
+              <div className="sensor-grid">
+                {paginatedSensors.map(s => (
+                  <SensorCard key={s.id} sensor={s} />
+                ))}
+              </div>
+
+              {/* Pagination Bar */}
+              <div className="pagination-bar">
+                <div className="pagination-info">
+                  Menampilkan <b>{(currentPage - 1) * PAGE_SIZE + 1} - {Math.min(currentPage * PAGE_SIZE, filteredSensors.length)}</b> dari <b>{filteredSensors.length}</b> sensor
+                  <span className="pagination-badge">4 baris × 5 kolom</span>
+                </div>
+
+                {totalPages > 1 && (
+                  <div className="pagination-controls">
+                    <button
+                      className="pagination-btn nav"
+                      disabled={currentPage === 1}
+                      onClick={() => setPage(1)}
+                      title="Halaman Pertama"
+                    >
+                      «
+                    </button>
+                    <button
+                      className="pagination-btn nav"
+                      disabled={currentPage === 1}
+                      onClick={() => setPage(p => Math.max(1, p - 1))}
+                      title="Sebelumnya"
+                    >
+                      ‹ Prev
+                    </button>
+
+                    <div className="pagination-pages">
+                      {pageRange.map((p, idx) => (
+                        typeof p === 'number' ? (
+                          <button
+                            key={p}
+                            className={`pagination-btn ${currentPage === p ? 'active' : ''}`}
+                            onClick={() => setPage(p)}
+                          >
+                            {p}
+                          </button>
+                        ) : (
+                          <span key={`ellipsis-${idx}`} className="pagination-ellipsis">…</span>
+                        )
+                      ))}
+                    </div>
+
+                    <button
+                      className="pagination-btn nav"
+                      disabled={currentPage === totalPages}
+                      onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                      title="Berikutnya"
+                    >
+                      Next ›
+                    </button>
+                    <button
+                      className="pagination-btn nav"
+                      disabled={currentPage === totalPages}
+                      onClick={() => setPage(totalPages)}
+                      title="Halaman Terakhir"
+                    >
+                      »
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
 
@@ -337,9 +542,9 @@ function SensorCard({ sensor }: { sensor: Sensor }) {
         </span>
         <span className="sensor-prtg-id">#{sensor.prtg_sensor_id}</span>
       </div>
-      <div className="sensor-device">{sensor.device_name}</div>
-      <div className="sensor-name">{sensor.sensor_name}</div>
-      <div className="sensor-footer">Sensor ID: {sensor.prtg_sensor_id}</div>
+      <div className="sensor-device" title={sensor.device_name}>{sensor.device_name}</div>
+      <div className="sensor-name" title={sensor.sensor_name}>{sensor.sensor_name}</div>
+      <div className="sensor-footer">ID: {sensor.prtg_sensor_id}</div>
     </div>
   );
 }
@@ -408,7 +613,7 @@ function OverviewTab({ summary, incidents, events, loading, onRefresh, onSelect,
                     </td>
                     <td><span className={`pill ${inc.status.toLowerCase()}`}>{inc.status}</span></td>
                     <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{fmtDuration(inc.duration_seconds)}</td>
-                    <td style={{ fontWeight: 700, color: inc.total_impact > 0 ? '#fca5a5' : 'var(--text-muted)' }}>
+                    <td style={{ fontWeight: 700, color: inc.total_impact > 0 ? 'var(--text-danger)' : 'var(--text-muted)' }}>
                       {money.format(inc.total_impact)}
                     </td>
                   </tr>
@@ -511,7 +716,7 @@ function ImpactTab({ incidents, onSelect }: { incidents: Incident[]; onSelect: (
                         </td>
                         <td><span className={`pill ${inc.severity.toLowerCase()}`}>{inc.severity}</span></td>
                         <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{fmtDuration(inc.duration_seconds)}</td>
-                        <td style={{ fontWeight: 800, color: '#fca5a5' }}>{money.format(inc.total_impact || 0)}</td>
+                        <td style={{ fontWeight: 800, color: 'var(--text-danger)' }}>{money.format(inc.total_impact || 0)}</td>
                         <td style={{ minWidth: 140 }}>
                           <div className="impact-bar-wrap">
                             <div className="impact-bar-bg">
@@ -548,7 +753,7 @@ function ImpactTab({ incidents, onSelect }: { incidents: Incident[]; onSelect: (
                     <td><strong>{inc.service?.name || 'Unmapped'}</strong></td>
                     <td><strong>{inc.sensor?.name}</strong><small>{inc.sensor?.device}</small></td>
                     <td><span className={`pill ${inc.severity.toLowerCase()}`}>{inc.severity}</span></td>
-                    <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: '#fca5a5' }}>
+                    <td style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'var(--text-danger)', fontWeight: 600 }}>
                       {fmtDuration(inc.duration_seconds)}
                     </td>
                     <td><span className={`pill ${inc.status.toLowerCase()}`}>{inc.status}</span></td>
