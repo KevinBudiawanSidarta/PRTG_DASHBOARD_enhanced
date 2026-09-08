@@ -1,0 +1,143 @@
+[
+  {
+    "device_pattern": "SRV-DNS",
+    "sensor_pattern": "",
+    "service_category": "server",
+    "description": "Server DNS internal perusahaan. Downtime menyebabkan semua client tidak dapat me-resolve domain lokal maupun internet.",
+    "hourly_loss_estimate": 90000000,
+    "sla_penalty_per_hour": 20000000,
+    "affected_users_estimate": 3200,
+    "recovery_time_estimate_minutes": 15,
+    "priority": "P1",
+    "affected_processes": [
+      "DNS Resolution",
+      "Active Directory Domain Auth",
+      "Internal API Routing"
+    ],
+    "recovery_procedure": "1. Lakukan ping dan periksa service systemd-resolved / named / bind9\n2. Jalankan: systemctl restart bind9 (atau named)\n3. Verifikasi port 53 listening: ss -ulpn | grep 53\n4. Jika server OS crash, alihkan DHCP DNS sementara ke secondary DNS (8.8.8.8)",
+    "is_active": true
+  },
+  {
+    "device_pattern": "Mikrotik",
+    "sensor_pattern": "",
+    "service_category": "network",
+    "description": "Router Mikrotik Core Gateway. Mengatur routing VLAN kantor, bandwidth management, dan NAT transaksi.",
+    "hourly_loss_estimate": 65000000,
+    "sla_penalty_per_hour": 12000000,
+    "affected_users_estimate": 1500,
+    "recovery_time_estimate_minutes": 25,
+    "priority": "P1",
+    "affected_processes": [
+      "Office Gateway",
+      "Bandwidth QoS",
+      "VLAN Inter-routing"
+    ],
+    "recovery_procedure": "1. Cek status fisik router Mikrotik dan indikator LED port\n2. Coba akses via Winbox MAC / IP 192.168.10.1\n3. Periksa CPU load dan log: /log print\n4. Jika routing loop atau interface disabled, aktifkan interface: /interface enable\n5. Reboot darurat via Winbox jika system unresponsive",
+    "is_active": true
+  },
+  {
+    "device_pattern": "Core Router",
+    "sensor_pattern": "Ping",
+    "service_category": "network",
+    "description": "Router utama gateway jaringan kantor & data center. Downtime memutus koneksi internet dan gateway transaksi.",
+    "hourly_loss_estimate": 75000000,
+    "sla_penalty_per_hour": 15000000,
+    "affected_users_estimate": 2500,
+    "recovery_time_estimate_minutes": 30,
+    "priority": "P1",
+    "affected_processes": [
+      "Internet Gateway",
+      "VPN Access",
+      "Core Transaction Routing"
+    ],
+    "recovery_procedure": "1. Cek status fisik kabel uplink & power supply router\n2. Akses via SSH/Console dan jalankan show ip interface brief\n3. Verifikasi route BGP dan failover ke redundant path jika perlu\n4. Eskalasi ke NOC provider jika link WAN terputus",
+    "is_active": true
+  },
+  {
+    "device_pattern": "Database",
+    "sensor_pattern": "",
+    "service_category": "database",
+    "description": "Database kluster utama untuk penyimpanan data operasional & billing. Downtime menghentikan transaksi pelanggan.",
+    "hourly_loss_estimate": 120000000,
+    "sla_penalty_per_hour": 25000000,
+    "affected_users_estimate": 5000,
+    "recovery_time_estimate_minutes": 45,
+    "priority": "P1",
+    "affected_processes": [
+      "Transaction Ledger",
+      "Billing API",
+      "Customer Auth"
+    ],
+    "recovery_procedure": "1. Cek disk space dan lock queries di postgresql\n2. Promosikan replica ke primary jika hardware failure\n3. Restart service postgresql jika OOM killer triggered\n4. Verifikasi konektivitas aplikasi ke database",
+    "is_active": true
+  },
+  {
+    "device_pattern": "Switch",
+    "sensor_pattern": "",
+    "service_category": "network",
+    "description": "Switch distribusi lantai & server rack. Berpotensi mengisolasi segment jaringan lokal.",
+    "hourly_loss_estimate": 35000000,
+    "sla_penalty_per_hour": 5000000,
+    "affected_users_estimate": 800,
+    "recovery_time_estimate_minutes": 20,
+    "priority": "P2",
+    "affected_processes": [
+      "Local Office LAN",
+      "Internal File Server",
+      "Printer Access"
+    ],
+    "recovery_procedure": "1. Cek spanning-tree loop dan broadcast storm\n2. Cek status SFP transceivers pada trunk uplink\n3. Restart port atau reboot switch jika firmware hang",
+    "is_active": true
+  },
+  {
+    "device_pattern": "Router Indihome",
+    "sensor_pattern": "",
+    "service_category": "network",
+    "description": "Modem / Router WAN Link Indihome sebagai jalur internet cadangan/primer kantor.",
+    "hourly_loss_estimate": 25000000,
+    "sla_penalty_per_hour": 5000000,
+    "affected_users_estimate": 600,
+    "recovery_time_estimate_minutes": 40,
+    "priority": "P2",
+    "affected_processes": [
+      "Internet Uplink",
+      "VPN Site-to-Site"
+    ],
+    "recovery_procedure": "1. Cek lampu indikator PON/LOS pada modem (merah = putus fiber optic)\n2. Restart adaptor power modem (tunggu 2 menit)\n3. Jika LOS merah, segera hubungi 147 / NOC Telkom dengan ID pelanggan",
+    "is_active": true
+  },
+  {
+    "device_pattern": "MQTT Device",
+    "sensor_pattern": "",
+    "service_category": "application",
+    "description": "Broker IoT & telemetry gateway untuk monitoring sensor suhu dan listrik fasilitas.",
+    "hourly_loss_estimate": 20000000,
+    "sla_penalty_per_hour": 3000000,
+    "affected_users_estimate": 200,
+    "recovery_time_estimate_minutes": 30,
+    "priority": "P2",
+    "affected_processes": [
+      "IoT Telemetry",
+      "Facility Environmental Monitoring"
+    ],
+    "recovery_procedure": "1. Cek koneksi broker MQTT port 1883 / 8883\n2. Restart daemon mosquitto / emqx\n3. Cek log queue message drop",
+    "is_active": true
+  },
+  {
+    "device_pattern": "NBOX",
+    "sensor_pattern": "",
+    "service_category": "storage",
+    "description": "Storage appliance / backup vault untuk pencadangan berkala data operasional.",
+    "hourly_loss_estimate": 15000000,
+    "sla_penalty_per_hour": 2000000,
+    "affected_users_estimate": 150,
+    "recovery_time_estimate_minutes": 60,
+    "priority": "P3",
+    "affected_processes": [
+      "Nightly Backup",
+      "Disaster Recovery Replication"
+    ],
+    "recovery_procedure": "1. Cek status RAID dan disk status\n2. Cek koneksi NFS/SMB share\n3. Restart storage service",
+    "is_active": true
+  }
+]

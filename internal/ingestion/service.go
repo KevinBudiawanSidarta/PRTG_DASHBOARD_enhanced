@@ -47,23 +47,22 @@ func StoreEvent(ctx context.Context, pool *pgxpool.Pool, in EventInput) (Result,
 	if in.OccurredAt.IsZero() {
 		in.OccurredAt = time.Now().UTC()
 	}
-	if in.OnlyIfStateChanged {
-		var previous string
-		err := pool.QueryRow(ctx, `select coalesce(last_known_state,'unknown') from prtg_sensors where organization_id=$1 and prtg_instance_id=$2 and prtg_sensor_id=$3`, orgID, instanceID, in.PRTGSensorID).Scan(&previous)
-		if err == nil && previous == in.State {
-			return Result{Inserted: false}, nil
-		}
-	}
-	fingerprint := Fingerprint(in.PRTGInstanceID, in.PRTGSensorID, in.OccurredAt, in.EventType)
-	raw, err := json.Marshal(in.RawPayload)
-	if err != nil {
-		return Result{}, err
-	}
+	var previous string
+	_ = pool.QueryRow(ctx, `select coalesce(last_known_state,'unknown') from prtg_sensors where organization_id=$1 and prtg_instance_id=$2 and prtg_sensor_id=$3`, orgID, instanceID, in.PRTGSensorID).Scan(&previous)
+
 	var sensorUUID uuid.UUID
 	err = pool.QueryRow(ctx, `insert into prtg_sensors(organization_id,prtg_instance_id,prtg_sensor_id,device_name,sensor_name,last_known_state,updated_at)
 		values($1,$2,$3,$4,$5,$6,now())
 		on conflict(prtg_instance_id,prtg_sensor_id) do update set device_name=coalesce(excluded.device_name,prtg_sensors.device_name),sensor_name=coalesce(excluded.sensor_name,prtg_sensors.sensor_name),last_known_state=excluded.last_known_state,updated_at=now()
 		returning id`, orgID, instanceID, in.PRTGSensorID, nullable(in.DeviceName), nullable(in.SensorName), in.State).Scan(&sensorUUID)
+	if err != nil {
+		return Result{}, err
+	}
+	if in.OnlyIfStateChanged && previous != "" && previous == in.State {
+		return Result{Inserted: false}, nil
+	}
+	fingerprint := Fingerprint(in.PRTGInstanceID, in.PRTGSensorID, in.OccurredAt, in.EventType)
+	raw, err := json.Marshal(in.RawPayload)
 	if err != nil {
 		return Result{}, err
 	}

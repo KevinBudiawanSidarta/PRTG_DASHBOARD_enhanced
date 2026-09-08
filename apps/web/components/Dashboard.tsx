@@ -1,5 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import AIAnalysis from './AIAnalysis';
+import KnowledgeBase from './KnowledgeBase';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type Summary = { open_incidents: number; critical_incidents: number; total_impact: number; events_24h: number };
@@ -11,7 +13,7 @@ type Mapping = { sensor_id: string; prtg_sensor_id: string; device_name: string;
 type Profile = { id: string; business_service_id: string | null; service_name: string; hourly_revenue: number; transactions_per_hour: number; avg_transaction_value: number; service_dependency: number; loss_probability: number; operational_cost_per_hour: number; penalty_fixed: number; recovery_fixed: number; valid_from: string; valid_to: string | null; active: boolean };
 type TechEvent = { id: string; state: string; device: string; sensor: string; occurred_at: string };
 
-type Tab = 'monitoring' | 'overview' | 'impact' | 'mapping' | 'financial';
+type Tab = 'monitoring' | 'ai' | 'kb' | 'overview' | 'impact' | 'mapping' | 'financial';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
@@ -85,6 +87,8 @@ export default function Dashboard() {
 
   const navItems: { id: Tab; icon: string; label: string; badge?: number }[] = [
     { id: 'monitoring', icon: '📡', label: 'Live Monitoring', badge: sensorDown || undefined },
+    { id: 'ai',         icon: '🤖', label: 'AI Impact Analysis', badge: sensorDown || undefined },
+    { id: 'kb',         icon: '📚', label: 'Knowledge Base (CRUD)' },
     { id: 'overview',   icon: '📊', label: 'Executive Overview', badge: openIncidents.length || undefined },
     { id: 'impact',     icon: '💸', label: 'Business Impact' },
     { id: 'mapping',    icon: '🔗', label: 'Service Mapping' },
@@ -147,6 +151,8 @@ export default function Dashboard() {
         {tab === 'monitoring' && (
           <MonitoringTab sensors={sensors} events={events} loading={loading} onRefresh={refresh} />
         )}
+        {tab === 'ai' && <AIAnalysis />}
+        {tab === 'kb' && <KnowledgeBase />}
         {tab === 'overview' && (
           <OverviewTab
             summary={{ ...summary, open_incidents: openIncidents.length, critical_incidents: criticalCount }}

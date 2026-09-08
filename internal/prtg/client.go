@@ -13,14 +13,46 @@ import (
 )
 
 type Sensor struct {
-	ID        string `json:"objid"`
+	ID        string `json:"-"`
 	Device    string `json:"device"`
 	Sensor    string `json:"sensor"`
 	Status    string `json:"status"`
 	LastCheck any    `json:"lastcheck"`
 }
+
+func (s *Sensor) UnmarshalJSON(data []byte) error {
+	type Alias Sensor
+	aux := &struct {
+		RawID any `json:"objid"`
+		*Alias
+	}{
+		Alias: (*Alias)(s),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	switch v := aux.RawID.(type) {
+	case string:
+		s.ID = v
+	case float64:
+		s.ID = strconv.FormatInt(int64(v), 10)
+	case int64:
+		s.ID = strconv.FormatInt(v, 10)
+	case int:
+		s.ID = strconv.Itoa(v)
+	case json.Number:
+		s.ID = v.String()
+	default:
+		if v != nil {
+			s.ID = fmt.Sprintf("%v", v)
+		}
+	}
+	return nil
+}
+
 type tableResponse struct {
-	Sensors []Sensor `json:"sensordata"`
+	Sensors    []Sensor `json:"sensors"`
+	SensorData []Sensor `json:"sensordata"`
 }
 
 type Client struct {
@@ -87,14 +119,19 @@ func (c *Client) Sensors(ctx context.Context) ([]Sensor, error) {
 		return nil, err
 	}
 	var table tableResponse
-	if err = json.Unmarshal(raw, &table); err == nil && table.Sensors != nil {
-		return table.Sensors, nil
+	if err = json.Unmarshal(raw, &table); err == nil {
+		if len(table.Sensors) > 0 {
+			return table.Sensors, nil
+		}
+		if len(table.SensorData) > 0 {
+			return table.SensorData, nil
+		}
 	}
 	var sensors []Sensor
-	if err = json.Unmarshal(raw, &sensors); err != nil {
-		return nil, fmt.Errorf("decode PRTG payload: %w", err)
+	if err = json.Unmarshal(raw, &sensors); err == nil && len(sensors) > 0 {
+		return sensors, nil
 	}
-	return sensors, nil
+	return nil, fmt.Errorf("decode PRTG payload: failed to parse sensors from response")
 }
 
 func NormalizeState(status string) string {

@@ -52,6 +52,11 @@ func main() {
 	mux.Handle("POST /api/v1/financial-profiles", auth.WithOrg(http.HandlerFunc(a.createFinancialProfile)))
 	mux.Handle("PUT /api/v1/financial-profiles/", auth.WithOrg(http.HandlerFunc(a.updateFinancialProfile)))
 	mux.Handle("DELETE /api/v1/financial-profiles/", auth.WithOrg(http.HandlerFunc(a.deleteFinancialProfile)))
+	mux.Handle("GET /api/v1/knowledge-base", auth.WithOrg(http.HandlerFunc(a.listKnowledgeBase)))
+	mux.Handle("POST /api/v1/knowledge-base", auth.WithOrg(http.HandlerFunc(a.createKnowledgeBase)))
+	mux.Handle("PUT /api/v1/knowledge-base/", auth.WithOrg(http.HandlerFunc(a.updateKnowledgeBase)))
+	mux.Handle("DELETE /api/v1/knowledge-base/", auth.WithOrg(http.HandlerFunc(a.deleteKnowledgeBase)))
+	mux.Handle("POST /api/v1/ai/analyze", auth.WithOrg(http.HandlerFunc(a.aiAnalyze)))
 	mux.HandleFunc("POST /internal/prtg/events", a.prtgWebhook)
 	srv := &http.Server{Addr: ":" + env("PORT", "8080"), Handler: withJSON(withCORS(mux)), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 	fmt.Printf("API listening on %s\n", srv.Addr)
@@ -69,7 +74,7 @@ func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization,Content-Type,X-Organization-ID")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
 			return
@@ -791,4 +796,350 @@ func (a *app) prtgWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOut(w, 200, map[string]any{"accepted": true, "inserted": res.Inserted, "event_id": res.EventID})
+}
+
+// ─── Knowledge Base CRUD ────────────────────────────────────────────────────
+
+type kbInput struct {
+	DevicePattern              string   `json:"device_pattern"`
+	SensorPattern              string   `json:"sensor_pattern"`
+	ServiceCategory            string   `json:"service_category"`
+	Description                string   `json:"description"`
+	HourlyLossEstimate         float64  `json:"hourly_loss_estimate"`
+	AffectedUsersEstimate      int      `json:"affected_users_estimate"`
+	AffectedProcesses          []string `json:"affected_processes"`
+	SLAPenaltyPerHour          float64  `json:"sla_penalty_per_hour"`
+	RecoveryTimeEstimateMinutes int     `json:"recovery_time_estimate_minutes"`
+	RecoveryProcedure          string   `json:"recovery_procedure"`
+	Priority                   string   `json:"priority"`
+	IsActive                   bool     `json:"is_active"`
+}
+
+func (a *app) listKnowledgeBase(w http.ResponseWriter, r *http.Request) {
+	org := orgID(r)
+	rows, err := a.pool.Query(r.Context(), `SELECT id,device_pattern,sensor_pattern,service_category,description,hourly_loss_estimate,affected_users_estimate,affected_processes,sla_penalty_per_hour,recovery_time_estimate_minutes,recovery_procedure,priority,is_active,created_at,updated_at FROM knowledge_base WHERE organization_id=$1 ORDER BY priority,device_pattern`, org)
+	if err != nil {
+		jsonOut(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id uuid.UUID
+		var devicePattern, sensorPattern, serviceCategory, description, priority string
+		var recoveryProcedure *string
+		var hourlyLoss, slaPenalty float64
+		var affectedUsers, recoveryMinutes int
+		var affectedProcesses []string
+		var isActive bool
+		var createdAt, updatedAt time.Time
+		if err := rows.Scan(&id, &devicePattern, &sensorPattern, &serviceCategory, &description, &hourlyLoss, &affectedUsers, &affectedProcesses, &slaPenalty, &recoveryMinutes, &recoveryProcedure, &priority, &isActive, &createdAt, &updatedAt); err != nil {
+			jsonOut(w, 500, map[string]any{"error": err.Error()})
+			return
+		}
+		rp := ""
+		if recoveryProcedure != nil {
+			rp = *recoveryProcedure
+		}
+		if affectedProcesses == nil {
+			affectedProcesses = []string{}
+		}
+		out = append(out, map[string]any{
+			"id": id, "device_pattern": devicePattern, "sensor_pattern": sensorPattern,
+			"service_category": serviceCategory, "description": description,
+			"hourly_loss_estimate": hourlyLoss, "affected_users_estimate": affectedUsers,
+			"affected_processes": affectedProcesses, "sla_penalty_per_hour": slaPenalty,
+			"recovery_time_estimate_minutes": recoveryMinutes, "recovery_procedure": rp,
+			"priority": priority, "is_active": isActive,
+			"created_at": createdAt, "updated_at": updatedAt,
+		})
+	}
+	jsonOut(w, 200, map[string]any{"items": out})
+}
+
+func (a *app) createKnowledgeBase(w http.ResponseWriter, r *http.Request) {
+	if err := adminOnly(r); err != nil {
+		jsonOut(w, 403, map[string]any{"error": err.Error()})
+		return
+	}
+	org := orgID(r)
+	var in kbInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		jsonOut(w, 400, map[string]any{"error": "invalid JSON"})
+		return
+	}
+	if in.DevicePattern == "" || in.Description == "" {
+		jsonOut(w, 400, map[string]any{"error": "device_pattern and description are required"})
+		return
+	}
+	cats := map[string]bool{"network": true, "server": true, "application": true, "database": true, "storage": true, "security": true}
+	if !cats[in.ServiceCategory] {
+		in.ServiceCategory = "network"
+	}
+	pris := map[string]bool{"P1": true, "P2": true, "P3": true, "P4": true}
+	if !pris[in.Priority] {
+		in.Priority = "P2"
+	}
+	if in.RecoveryTimeEstimateMinutes <= 0 {
+		in.RecoveryTimeEstimateMinutes = 60
+	}
+	if in.AffectedProcesses == nil {
+		in.AffectedProcesses = []string{}
+	}
+	var id uuid.UUID
+	err := a.pool.QueryRow(r.Context(), `INSERT INTO knowledge_base(organization_id,device_pattern,sensor_pattern,service_category,description,hourly_loss_estimate,affected_users_estimate,affected_processes,sla_penalty_per_hour,recovery_time_estimate_minutes,recovery_procedure,priority,is_active) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+		org, in.DevicePattern, in.SensorPattern, in.ServiceCategory, in.Description,
+		in.HourlyLossEstimate, in.AffectedUsersEstimate, in.AffectedProcesses,
+		in.SLAPenaltyPerHour, in.RecoveryTimeEstimateMinutes, in.RecoveryProcedure,
+		in.Priority, true).Scan(&id)
+	if err != nil {
+		jsonOut(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	_ = audit.Record(r.Context(), a.pool, org, "admin", "knowledge_base.create", "knowledge_base", &id, nil, in)
+	jsonOut(w, 201, map[string]any{"id": id})
+}
+
+func (a *app) updateKnowledgeBase(w http.ResponseWriter, r *http.Request) {
+	if err := adminOnly(r); err != nil {
+		jsonOut(w, 403, map[string]any{"error": err.Error()})
+		return
+	}
+	id, err := pathID(r, "/api/v1/knowledge-base/")
+	if err != nil {
+		jsonOut(w, 400, map[string]any{"error": "invalid id"})
+		return
+	}
+	org := orgID(r)
+	var in kbInput
+	if err = json.NewDecoder(r.Body).Decode(&in); err != nil {
+		jsonOut(w, 400, map[string]any{"error": "invalid JSON"})
+		return
+	}
+	if in.DevicePattern == "" || in.Description == "" {
+		jsonOut(w, 400, map[string]any{"error": "device_pattern and description are required"})
+		return
+	}
+	cats := map[string]bool{"network": true, "server": true, "application": true, "database": true, "storage": true, "security": true}
+	if !cats[in.ServiceCategory] {
+		in.ServiceCategory = "network"
+	}
+	pris := map[string]bool{"P1": true, "P2": true, "P3": true, "P4": true}
+	if !pris[in.Priority] {
+		in.Priority = "P2"
+	}
+	if in.RecoveryTimeEstimateMinutes <= 0 {
+		in.RecoveryTimeEstimateMinutes = 60
+	}
+	if in.AffectedProcesses == nil {
+		in.AffectedProcesses = []string{}
+	}
+	cmd, err := a.pool.Exec(r.Context(), `UPDATE knowledge_base SET device_pattern=$1,sensor_pattern=$2,service_category=$3,description=$4,hourly_loss_estimate=$5,affected_users_estimate=$6,affected_processes=$7,sla_penalty_per_hour=$8,recovery_time_estimate_minutes=$9,recovery_procedure=$10,priority=$11,is_active=$12,updated_at=now() WHERE organization_id=$13 AND id=$14`,
+		in.DevicePattern, in.SensorPattern, in.ServiceCategory, in.Description,
+		in.HourlyLossEstimate, in.AffectedUsersEstimate, in.AffectedProcesses,
+		in.SLAPenaltyPerHour, in.RecoveryTimeEstimateMinutes, in.RecoveryProcedure,
+		in.Priority, in.IsActive, org, id)
+	if err != nil {
+		jsonOut(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	if cmd.RowsAffected() == 0 {
+		jsonOut(w, 404, map[string]any{"error": "knowledge base entry not found"})
+		return
+	}
+	_ = audit.Record(r.Context(), a.pool, org, "admin", "knowledge_base.update", "knowledge_base", &id, nil, in)
+	jsonOut(w, 200, map[string]any{"id": id})
+}
+
+func (a *app) deleteKnowledgeBase(w http.ResponseWriter, r *http.Request) {
+	if err := adminOnly(r); err != nil {
+		jsonOut(w, 403, map[string]any{"error": err.Error()})
+		return
+	}
+	id, err := pathID(r, "/api/v1/knowledge-base/")
+	if err != nil {
+		jsonOut(w, 400, map[string]any{"error": "invalid id"})
+		return
+	}
+	org := orgID(r)
+	cmd, err := a.pool.Exec(r.Context(), `DELETE FROM knowledge_base WHERE organization_id=$1 AND id=$2`, org, id)
+	if err != nil {
+		jsonOut(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	if cmd.RowsAffected() == 0 {
+		jsonOut(w, 404, map[string]any{"error": "knowledge base entry not found"})
+		return
+	}
+	_ = audit.Record(r.Context(), a.pool, org, "admin", "knowledge_base.delete", "knowledge_base", &id, nil, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ─── AI Analysis ─────────────────────────────────────────────────────────────
+
+func (a *app) aiAnalyze(w http.ResponseWriter, r *http.Request) {
+	org := orgID(r)
+	var in struct {
+		Query    string `json:"query"`
+		SensorID string `json:"sensor_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		jsonOut(w, 400, map[string]any{"error": "invalid JSON"})
+		return
+	}
+
+	// Fetch all knowledge base entries for this org
+	kbRows, err := a.pool.Query(r.Context(), `SELECT id,device_pattern,sensor_pattern,service_category,description,hourly_loss_estimate,affected_users_estimate,affected_processes,sla_penalty_per_hour,recovery_time_estimate_minutes,recovery_procedure,priority FROM knowledge_base WHERE organization_id=$1 AND is_active=true ORDER BY priority`, org)
+	if err != nil {
+		jsonOut(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	defer kbRows.Close()
+	type kbEntry struct {
+		ID, DevicePattern, SensorPattern, ServiceCategory, Description, Priority, RecoveryProcedure string
+		HourlyLoss, SLAPenalty                                                                     float64
+		AffectedUsers, RecoveryMinutes                                                             int
+		AffectedProcesses                                                                          []string
+	}
+	var kbEntries []kbEntry
+	for kbRows.Next() {
+		var e kbEntry
+		var recProc *string
+		var procs []string
+		var kid uuid.UUID
+		if err := kbRows.Scan(&kid, &e.DevicePattern, &e.SensorPattern, &e.ServiceCategory, &e.Description, &e.HourlyLoss, &e.AffectedUsers, &procs, &e.SLAPenalty, &e.RecoveryMinutes, &recProc, &e.Priority); err != nil {
+			jsonOut(w, 500, map[string]any{"error": err.Error()})
+			return
+		}
+		e.ID = kid.String()
+		if recProc != nil {
+			e.RecoveryProcedure = *recProc
+		}
+		if procs != nil {
+			e.AffectedProcesses = procs
+		}
+		kbEntries = append(kbEntries, e)
+	}
+
+	// Fetch down sensors
+	sRows, err := a.pool.Query(r.Context(), `SELECT id,prtg_sensor_id,device_name,sensor_name,last_known_state FROM prtg_sensors WHERE organization_id=$1 AND last_known_state='down' ORDER BY device_name`, org)
+	if err != nil {
+		jsonOut(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	defer sRows.Close()
+	type sensorInfo struct {
+		ID, PRTGID, Device, Sensor, State string
+	}
+	var downSensors []sensorInfo
+	for sRows.Next() {
+		var s sensorInfo
+		var sid uuid.UUID
+		if err := sRows.Scan(&sid, &s.PRTGID, &s.Device, &s.Sensor, &s.State); err != nil {
+			jsonOut(w, 500, map[string]any{"error": err.Error()})
+			return
+		}
+		s.ID = sid.String()
+		downSensors = append(downSensors, s)
+	}
+
+	// If a specific sensor was requested, add it to analysis even if not down
+	if in.SensorID != "" {
+		sid, e := uuid.Parse(in.SensorID)
+		if e == nil {
+			var dev, name, state string
+			err = a.pool.QueryRow(r.Context(), `SELECT device_name,sensor_name,last_known_state FROM prtg_sensors WHERE organization_id=$1 AND id=$2`, org, sid).Scan(&dev, &name, &state)
+			if err == nil {
+				found := false
+				for _, s := range downSensors {
+					if s.ID == sid.String() {
+						found = true
+						break
+					}
+				}
+				if !found {
+					downSensors = append(downSensors, sensorInfo{ID: sid.String(), Device: dev, Sensor: name, State: state})
+				}
+			}
+		}
+	}
+
+	// Match sensors against knowledge base
+	type analysisResult struct {
+		Sensor           map[string]any   `json:"sensor"`
+		MatchedRules     []map[string]any `json:"matched_rules"`
+		TotalHourlyLoss  float64          `json:"total_hourly_loss"`
+		TotalSLAPenalty  float64          `json:"total_sla_penalty"`
+		AffectedUsers    int              `json:"affected_users"`
+		RecoveryMinutes  int              `json:"recovery_time_minutes"`
+		RiskLevel        string           `json:"risk_level"`
+		Recommendations  []string         `json:"recommendations"`
+	}
+	var results []analysisResult
+	totalOrgImpact := 0.0
+	for _, sensor := range downSensors {
+		ar := analysisResult{
+			Sensor: map[string]any{"id": sensor.ID, "device": sensor.Device, "sensor": sensor.Sensor, "state": sensor.State},
+		}
+		for _, kb := range kbEntries {
+			deviceMatch := strings.Contains(strings.ToLower(sensor.Device), strings.ToLower(kb.DevicePattern))
+			sensorMatch := kb.SensorPattern == "" || strings.Contains(strings.ToLower(sensor.Sensor), strings.ToLower(kb.SensorPattern))
+			if deviceMatch && sensorMatch {
+				ar.MatchedRules = append(ar.MatchedRules, map[string]any{
+					"kb_id": kb.ID, "device_pattern": kb.DevicePattern, "description": kb.Description,
+					"hourly_loss": kb.HourlyLoss, "sla_penalty": kb.SLAPenalty, "priority": kb.Priority,
+					"affected_processes": kb.AffectedProcesses, "recovery_procedure": kb.RecoveryProcedure,
+					"recovery_minutes": kb.RecoveryMinutes, "category": kb.ServiceCategory,
+				})
+				ar.TotalHourlyLoss += kb.HourlyLoss
+				ar.TotalSLAPenalty += kb.SLAPenalty
+				if kb.AffectedUsers > ar.AffectedUsers {
+					ar.AffectedUsers = kb.AffectedUsers
+				}
+				if kb.RecoveryMinutes > ar.RecoveryMinutes {
+					ar.RecoveryMinutes = kb.RecoveryMinutes
+				}
+			}
+		}
+		if ar.MatchedRules == nil {
+			ar.MatchedRules = []map[string]any{}
+		}
+		// Determine risk level
+		switch {
+		case ar.TotalHourlyLoss >= 100000000:
+			ar.RiskLevel = "CRITICAL"
+		case ar.TotalHourlyLoss >= 50000000:
+			ar.RiskLevel = "HIGH"
+		case ar.TotalHourlyLoss >= 10000000:
+			ar.RiskLevel = "MEDIUM"
+		default:
+			ar.RiskLevel = "LOW"
+		}
+		// Generate recommendations
+		if sensor.State == "down" {
+			ar.Recommendations = append(ar.Recommendations, fmt.Sprintf("URGENT: %s sedang DOWN — segera eskalasi ke tim terkait", sensor.Device))
+		}
+		if ar.TotalHourlyLoss > 0 {
+			ar.Recommendations = append(ar.Recommendations, fmt.Sprintf("Estimasi kerugian: Rp %.0f per jam downtime", ar.TotalHourlyLoss))
+		}
+		if ar.RecoveryMinutes > 0 {
+			ar.Recommendations = append(ar.Recommendations, fmt.Sprintf("Estimasi waktu recovery: %d menit", ar.RecoveryMinutes))
+		}
+		if len(ar.MatchedRules) == 0 {
+			ar.Recommendations = append(ar.Recommendations, "Belum ada knowledge base entry untuk device ini — tambahkan di tab Knowledge Base")
+		}
+		totalOrgImpact += ar.TotalHourlyLoss
+		results = append(results, ar)
+	}
+	if results == nil {
+		results = []analysisResult{}
+	}
+
+	summary := map[string]any{
+		"total_devices_affected": len(downSensors),
+		"total_hourly_impact":    totalOrgImpact,
+		"total_kb_rules":         len(kbEntries),
+		"analysis_timestamp":     time.Now().UTC(),
+	}
+	jsonOut(w, 200, map[string]any{"summary": summary, "analysis": results})
 }
