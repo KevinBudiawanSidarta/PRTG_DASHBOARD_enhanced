@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import AIAnalysis from './AIAnalysis';
+import BIADashboard from './BIADashboard';
 import KnowledgeBase from './KnowledgeBase';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -13,7 +14,7 @@ type Mapping = { sensor_id: string; prtg_sensor_id: string; device_name: string;
 type Profile = { id: string; business_service_id: string | null; service_name: string; hourly_revenue: number; transactions_per_hour: number; avg_transaction_value: number; service_dependency: number; loss_probability: number; operational_cost_per_hour: number; penalty_fixed: number; recovery_fixed: number; valid_from: string; valid_to: string | null; active: boolean };
 type TechEvent = { id: string; state: string; device: string; sensor: string; occurred_at: string };
 
-type Tab = 'monitoring' | 'ai' | 'kb' | 'overview' | 'impact' | 'mapping' | 'financial';
+type Tab = 'monitoring' | 'ai' | 'kb' | 'overview' | 'impact' | 'mapping' | 'financial' | 'bia';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
@@ -51,7 +52,7 @@ export default function Dashboard() {
   const [selected, setSelected] = useState<Detail | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [lastRefresh, setLastRefresh] = useState(new Date());
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -90,6 +91,7 @@ export default function Dashboard() {
     { id: 'ai',         icon: '🤖', label: 'AI Impact Analysis', badge: sensorDown || undefined },
     { id: 'kb',         icon: '📚', label: 'Knowledge Base (CRUD)' },
     { id: 'overview',   icon: '📊', label: 'Executive Overview', badge: openIncidents.length || undefined },
+    { id: 'bia',        icon: '🎯', label: 'Business Impact Analysis', badge: openIncidents.length || undefined },
     { id: 'impact',     icon: '💸', label: 'Business Impact' },
     { id: 'mapping',    icon: '🔗', label: 'Service Mapping' },
     { id: 'financial',  icon: '💰', label: 'Financial Profiles' },
@@ -135,7 +137,7 @@ export default function Dashboard() {
             Live · 15s refresh
           </div>
           <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 8, padding: '0 4px' }}>
-            Last: {lastRefresh.toLocaleTimeString()}
+            Last: {lastRefresh ? lastRefresh.toLocaleTimeString() : 'Loading...'}
           </div>
         </div>
       </aside>
@@ -170,6 +172,7 @@ export default function Dashboard() {
         )}
         {tab === 'mapping' && <MappingTab />}
         {tab === 'financial' && <FinancialTab />}
+        {tab === 'bia' && <BIADashboard />}
       </main>
 
       {/* ── Incident Drawer ── */}

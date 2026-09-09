@@ -5,3 +5,9 @@ bin/
 dist/
 coverage/
 *.log
+*.exe
+*.tsbuildinfo
+scripts/jet_manifest.json
+.certs/
+*.pem
+*.key

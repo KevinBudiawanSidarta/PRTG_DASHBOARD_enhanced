@@ -9,8 +9,10 @@ MVP reference implementation based on `TAD-IT-Business-Impact-Platform.md`. The 
 - `services/worker`: PostgreSQL `LISTEN/NOTIFY` consumer, incident engine, financial engine
 - `services/scheduler`: future-month `technical_events` partitions
 - `apps/web`: Next.js executive / IT operations / financial-impact dashboard
+- `apps/custom-ui`: standalone HTML/CSS/JS dashboard embedded as a JETData.AI custom form
 - `database/migrations`: forward-only PostgreSQL migration
-- `database/seeds`: demo tenant + service + sensor + financial profile
+- `database/seeds`: demo tenant + service + sensor + financial profile + knowledge base seed data
+- `scripts`: local dev launchers (`run.ps1`, `start_api.ps1`) and JETData.AI deployment tooling (see below)
 
 ## Run locally
 
@@ -94,3 +96,33 @@ prtg_instance_id=22222222-2222-2222-2222-222222222222&sensorid=%sensorid&status=
 ```
 
 When configuring PRTG, the official notification placeholders include `%sensorid`, `%status`, `%device`, `%sensor`, and `%datetime`; Execute HTTP Action supports POST with form payloads. See the Paessler docs for the exact notification-template behavior.
+
+## JETData.AI custom UI deployment
+
+`apps/custom-ui` is **not a second copy of the dashboard** — it's a thin iframe wrapper that embeds the real `apps/web` dashboard, so the JET custom form and `localhost:3000` are always pixel-identical and pull from the exact same API. There is nothing to keep in visual sync because it's the same app, not a lookalike.
+
+`scripts/` has these PowerShell helpers, run from the repo root:
+
+```powershell
+scripts\generate_dev_cert.ps1   # one-time: generate a self-signed HTTPS cert for the local dashboard
+scripts\bundle_and_deploy.ps1   # copies apps/custom-ui/index.html to dist/bia_custom_ui.html and pushes it to JET (form 140, "BIA Platform Dashboard")
+scripts\deploy_custom_ui.ps1    # pushes an already-built dist/bia_custom_ui.html to JET
+scripts\export_to_jetdata.ps1   # one-time: creates the 5 BIA data forms/fields in JET (135-139)
+scripts\sync_live_to_jetdata.ps1  # re-run any time: mirrors current database state into those 5 forms (records only — unrelated to the custom UI iframe, which always reads live from the API/database directly and needs no syncing)
+```
+
+All read `JET_HOST`, `JET_PROJECT`, `JET_USERNAME`, `JET_PASSWORD` from `.env` (see `.env.example`) via `scripts/_env.ps1` — never pass `-Password` on the command line or hardcode it in a script.
+
+### Why HTTPS is required
+
+JET is served over `https://`, and browsers block an `http://` iframe inside an `https://` page as mixed content. The dashboard must therefore be served over HTTPS too:
+
+```powershell
+.\scripts\generate_dev_cert.ps1     # once, generates .certs/localhost.pem + localhost-key.pem via openssl
+cd apps\web
+npm run dev:https                   # serves the dashboard at https://localhost:3000
+```
+
+**Before opening the JET custom form**, visit `https://localhost:3000` directly in the same browser once and click through the "not secure" self-signed certificate warning — the browser has to trust the origin *before* it will render inside an iframe. Skipping this step shows the browser's own certificate-error page inside the JET form instead of the dashboard.
+
+This only works while `services/api` and `apps/web` (via `dev:https`) are both running on the machine opening the JET form — it's a local-dev embedding, not a public deployment. To share this outside your own machine, deploy `apps/web` and `services/api` somewhere with a real HTTPS certificate and update the `dashboard-url` meta tag in `apps/custom-ui/index.html` to point at that URL before re-running `bundle_and_deploy.ps1`.

@@ -31,7 +31,7 @@ func CanTransition(from, to Status) bool {
 	case Open:
 		return to == Acknowledged || to == Resolved || to == Closed
 	case Acknowledged:
-		return to == Resolved
+		return to == Resolved || to == Closed
 	case Resolved:
 		return to == Closed
 	case Closed:

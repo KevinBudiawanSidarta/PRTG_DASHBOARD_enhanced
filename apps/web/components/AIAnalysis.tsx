@@ -49,6 +49,7 @@ export default function AIAnalysis() {
   const [analysisData, setAnalysisData] = useState<AnalysisResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [autoAnalyzing, setAutoAnalyzing] = useState(false);
+  const [error, setError] = useState('');
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
   const [scenarioHours, setScenarioHours] = useState('1');
 
@@ -64,7 +65,10 @@ export default function AIAnalysis() {
         body: JSON.stringify({ query: 'analyze', sensor_id: sensorId || '' }),
       });
       setAnalysisData(data);
-    } catch { /* ignore */ } finally {
+      setError('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Analisis gagal — API tidak dapat dihubungi');
+    } finally {
       setLoading(false);
     }
   }, []);
@@ -106,6 +110,12 @@ export default function AIAnalysis() {
           Analisis otomatis dampak finansial berdasarkan knowledge base dan status sensor PRTG real-time.
         </p>
       </div>
+
+      {error && (
+        <div className="alert-banner" id="ai-error-banner">
+          ⚠️ {error}
+        </div>
+      )}
 
       {/* Summary KPIs */}
       {analysisData && (

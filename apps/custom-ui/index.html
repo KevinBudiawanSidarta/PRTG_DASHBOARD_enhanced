@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="dashboard-url" content="https://localhost:3000">
+<title>BIA Platform</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; background: #0b1220; }
+  #dashboard-frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; }
+  #loading-overlay {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: #0b1220; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    transition: opacity .25s ease;
+  }
+  #loading-overlay.hidden { opacity: 0; pointer-events: none; }
+  .spinner {
+    width: 36px; height: 36px; border-radius: 50%; margin-bottom: 14px;
+    border: 3px solid rgba(255,255,255,.15); border-top-color: #6366f1;
+    animation: bia-spin 0.8s linear infinite;
+  }
+  @keyframes bia-spin { to { transform: rotate(360deg); } }
+  #loading-overlay p { font-size: 13px; color: #94a3b8; margin: 0; text-align: center; padding: 0 24px; }
+</style>
+</head>
+<body>
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+    <p id="loading-text">Memuat BIA Platform Dashboard&hellip;</p>
+  </div>
+
+  <iframe id="dashboard-frame" title="BIA Platform Dashboard"></iframe>
+
+  <script>
+    function getMeta(name) {
+      var el = document.querySelector('meta[name="' + name + '"]');
+      return el ? el.content : '';
+    }
+
+    var DASHBOARD_URL = getMeta('dashboard-url') || 'https://localhost:3000';
+
+    var frame = document.getElementById('dashboard-frame');
+    var overlay = document.getElementById('loading-overlay');
+    var loadingText = document.getElementById('loading-text');
+
+    frame.addEventListener('load', function () {
+      overlay.classList.add('hidden');
+    });
+    frame.src = DASHBOARD_URL;
+
+    // If the dashboard never loads (e.g. the local API/web servers aren't
+    // running on this machine), don't leave the user staring at a spinner
+    // forever - swap in a hint after a few seconds instead.
+    setTimeout(function () {
+      loadingText.innerHTML = 'Dashboard belum merespons.<br>Pastikan API dan web app sedang berjalan di komputer ini (localhost:3000), lalu refresh halaman ini.';
+    }, 6000);
+    setTimeout(function () { overlay.classList.add('hidden'); }, 15000);
+
+    // ── JET mobile back button (see /jet-custom-ui) ─────────────────────────
+    // This wrapper has no modal/drawer of its own - all in-app navigation
+    // state lives inside the embedded dashboard - so the handler just lets
+    // JET fall through to its default behavior (exit the form).
+    function goBack() { return false; }
+    window.active_function = 'bia_goBack';
+    window.bia_goBack = goBack;
+    window.addEventListener('popstate', function () { goBack(); });
+  </script>
+</body>
+</html>

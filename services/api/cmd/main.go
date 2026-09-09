@@ -15,6 +15,7 @@ import (
 	"github.com/example/bia-platform/internal/analytics"
 	"github.com/example/bia-platform/internal/audit"
 	"github.com/example/bia-platform/internal/auth"
+	"github.com/example/bia-platform/internal/financial"
 	"github.com/example/bia-platform/internal/incident"
 	"github.com/example/bia-platform/internal/ingestion"
 	"github.com/example/bia-platform/internal/platform/db"
@@ -22,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/shopspring/decimal"
 )
 
 type app struct{ pool *pgxpool.Pool }
@@ -57,6 +59,16 @@ func main() {
 	mux.Handle("PUT /api/v1/knowledge-base/", auth.WithOrg(http.HandlerFunc(a.updateKnowledgeBase)))
 	mux.Handle("DELETE /api/v1/knowledge-base/", auth.WithOrg(http.HandlerFunc(a.deleteKnowledgeBase)))
 	mux.Handle("POST /api/v1/ai/analyze", auth.WithOrg(http.HandlerFunc(a.aiAnalyze)))
+	// ── BIA Endpoints ──
+	mux.Handle("GET /api/v1/bia/executive-summary", auth.WithOrg(http.HandlerFunc(a.biaExecutiveSummary)))
+	mux.Handle("GET /api/v1/bia/service-impact", auth.WithOrg(http.HandlerFunc(a.biaServiceImpact)))
+	mux.Handle("GET /api/v1/bia/incident-priority", auth.WithOrg(http.HandlerFunc(a.biaIncidentPriority)))
+	mux.Handle("GET /api/v1/bia/sla-analysis", auth.WithOrg(http.HandlerFunc(a.biaSLAAnalysis)))
+	mux.Handle("GET /api/v1/bia/financial-impact", auth.WithOrg(http.HandlerFunc(a.biaFinancialImpact)))
+	mux.Handle("GET /api/v1/impact-matrix", auth.WithOrg(http.HandlerFunc(a.listImpactMatrix)))
+	mux.Handle("POST /api/v1/impact-matrix", auth.WithOrg(http.HandlerFunc(a.createImpactMatrix)))
+	mux.Handle("PUT /api/v1/impact-matrix/", auth.WithOrg(http.HandlerFunc(a.updateImpactMatrix)))
+	mux.Handle("DELETE /api/v1/impact-matrix/", auth.WithOrg(http.HandlerFunc(a.deleteImpactMatrix)))
 	mux.HandleFunc("POST /internal/prtg/events", a.prtgWebhook)
 	srv := &http.Server{Addr: ":" + env("PORT", "8080"), Handler: withJSON(withCORS(mux)), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 	fmt.Printf("API listening on %s\n", srv.Addr)
@@ -234,7 +246,9 @@ func (a *app) incidentAction(w http.ResponseWriter, r *http.Request) {
 	claims, _ := auth.ClaimsFromContext(r.Context())
 	org := claims.OrgID
 	var current string
-	err = a.pool.QueryRow(r.Context(), `select status from incidents where organization_id=$1 and id=$2`, org, id).Scan(&current)
+	var startedAt time.Time
+	var sensorID uuid.UUID
+	err = a.pool.QueryRow(r.Context(), `select status, started_at, prtg_sensor_id from incidents where organization_id=$1 and id=$2`, org, id).Scan(&current, &startedAt, &sensorID)
 	if err == pgx.ErrNoRows {
 		jsonOut(w, 404, map[string]any{"error": "incident not found"})
 		return
@@ -257,14 +271,74 @@ func (a *app) incidentAction(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, 409, map[string]any{"error": fmt.Sprintf("invalid transition %s -> %s", current, to)})
 		return
 	}
-	_, err = a.pool.Exec(r.Context(), `update incidents set status=$1 where organization_id=$2 and id=$3`, string(to), org, id)
-	if err != nil {
-		jsonOut(w, 500, map[string]any{"error": err.Error()})
-		return
+	if to == incident.Closed {
+		endedAt := time.Now().UTC()
+		dur := int64(endedAt.Sub(startedAt).Seconds())
+		if dur < 0 {
+			dur = 0
+		}
+		_, err = a.pool.Exec(r.Context(), `update incidents set status=$1, ended_at=$2, duration_seconds=$3 where organization_id=$4 and id=$5`, string(to), endedAt, dur, org, id)
+		if err != nil {
+			jsonOut(w, 500, map[string]any{"error": err.Error()})
+			return
+		}
+		a.calculateManualImpact(r.Context(), org, id, sensorID, dur, endedAt)
+	} else {
+		_, err = a.pool.Exec(r.Context(), `update incidents set status=$1 where organization_id=$2 and id=$3`, string(to), org, id)
+		if err != nil {
+			jsonOut(w, 500, map[string]any{"error": err.Error()})
+			return
+		}
 	}
 	_, _ = a.pool.Exec(r.Context(), `insert into incident_events(organization_id,incident_id,event_type,actor) values($1,$2,$3,$4)`, org, id, strings.ToLower(string(to)), claims.Role)
 	_ = audit.Record(r.Context(), a.pool, org, claims.Role, "incident."+action, "incident", &id, map[string]any{"status": current}, map[string]any{"status": to})
 	jsonOut(w, 200, map[string]any{"id": id, "status": to})
+}
+
+func (a *app) calculateManualImpact(ctx context.Context, org string, incID uuid.UUID, sensorID uuid.UUID, dur int64, ended time.Time) {
+	var serviceID *uuid.UUID
+	var dependency decimal.Decimal
+	_ = a.pool.QueryRow(ctx, `select business_service_id,dependency_weight from service_sensor_mapping where organization_id=$1 and prtg_sensor_id=$2 order by dependency_weight desc limit 1`, org, sensorID).Scan(&serviceID, &dependency)
+	var hourly, txh, atv, cost, pExp, rCost decimal.Decimal
+	q := `select hourly_revenue,coalesce(transactions_per_hour,0),coalesce(avg_transaction_value,0),service_dependency,loss_probability,operational_cost_per_hour,coalesce(penalty_config->>'fixed', '0')::numeric,coalesce(recovery_config->>'fixed','0')::numeric from financial_profiles where organization_id=$1 and ($2::uuid is null and business_service_id is null or business_service_id=$2) and valid_from <= $3 and (valid_to is null or $3 < valid_to) order by business_service_id nulls last, valid_from desc limit 1`
+	var dep, lp decimal.Decimal
+	if err := a.pool.QueryRow(ctx, q, org, serviceID, ended).Scan(&hourly, &txh, &atv, &dep, &lp, &cost, &pExp, &rCost); err != nil {
+		dep = decimal.NewFromFloat(dependency.InexactFloat64())
+		lp = decimal.NewFromInt(1)
+	}
+	model := financial.Model{
+		Version: "2026.1",
+		Components: []financial.Component{
+			{Key: "revenue_loss", Expr: "hourly_revenue * (duration_seconds/3600) * service_dependency * loss_probability"},
+			{Key: "operational_cost", Expr: "operational_cost_per_hour * (duration_seconds/3600)"},
+			{Key: "penalty_exposure", Expr: "penalty_exposure"},
+			{Key: "recovery_cost", Expr: "recovery_cost"},
+		},
+		TotalExpr: "revenue_loss + operational_cost + penalty_exposure + recovery_cost",
+	}
+	in := financial.InputSnapshot{
+		DurationSeconds:        dur,
+		HourlyRevenue:          hourly,
+		TransactionsPerHour:    txh,
+		AvgTransactionValue:    atv,
+		ServiceDependency:      dep,
+		LossProbability:        lp,
+		OperationalCostPerHour: cost,
+		PenaltyExposure:        pExp,
+		RecoveryCost:           rCost,
+	}
+	res, err := financial.Calculate(model, in)
+	if err != nil {
+		fmt.Printf("manual financial calculation failed: %s\n", err.Error())
+		return
+	}
+	var modelID uuid.UUID
+	if err = a.pool.QueryRow(ctx, `select id from impact_models where version=$1`, model.Version).Scan(&modelID); err != nil {
+		return
+	}
+	snap, _ := json.Marshal(in)
+	breakdown, _ := json.Marshal(res.Breakdown)
+	_, _ = a.pool.Exec(ctx, `insert into impact_calculations(organization_id,incident_id,impact_model_id,input_snapshot,result_breakdown,total_impact,confidence) values($1,$2,$3,$4,$5,$6,$7) on conflict(incident_id,impact_model_id) do update set input_snapshot=excluded.input_snapshot, result_breakdown=excluded.result_breakdown, total_impact=excluded.total_impact, confidence=excluded.confidence`, org, incID, modelID, snap, breakdown, res.Total, 0.9)
 }
 
 func (a *app) events(w http.ResponseWriter, r *http.Request) {
@@ -294,7 +368,7 @@ func (a *app) events(w http.ResponseWriter, r *http.Request) {
 }
 func (a *app) services(w http.ResponseWriter, r *http.Request) {
 	org := orgID(r)
-	rows, err := a.pool.Query(r.Context(), `select id,name,criticality from business_services where organization_id=$1 order by criticality,name`, org)
+	rows, err := a.pool.Query(r.Context(), `select id,name,criticality,coalesce(owner_name,''),coalesce(affected_users,0),coalesce(sla_target_pct,99.9),coalesce(rto_minutes,60),coalesce(rpo_minutes,30),coalesce(description,''),coalesce(business_value_per_hour,0) from business_services where organization_id=$1 order by criticality,name`, org)
 	if err != nil {
 		jsonOut(w, 500, map[string]any{"error": err.Error()})
 		return
@@ -303,19 +377,28 @@ func (a *app) services(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for rows.Next() {
 		var id uuid.UUID
-		var name, criticality string
-		if err := rows.Scan(&id, &name, &criticality); err != nil {
+		var name, criticality, owner, desc string
+		var users, rto, rpo int
+		var sla, bvph float64
+		if err := rows.Scan(&id, &name, &criticality, &owner, &users, &sla, &rto, &rpo, &desc, &bvph); err != nil {
 			jsonOut(w, 500, map[string]any{"error": err.Error()})
 			return
 		}
-		out = append(out, map[string]any{"id": id, "name": name, "criticality": criticality})
+		out = append(out, map[string]any{"id": id, "name": name, "criticality": criticality, "owner_name": owner, "affected_users": users, "sla_target_pct": sla, "rto_minutes": rto, "rpo_minutes": rpo, "description": desc, "business_value_per_hour": bvph})
 	}
 	jsonOut(w, 200, map[string]any{"items": out})
 }
 
 type serviceInput struct {
-	Name        string `json:"name"`
-	Criticality string `json:"criticality"`
+	Name                 string  `json:"name"`
+	Criticality          string  `json:"criticality"`
+	OwnerName            string  `json:"owner_name"`
+	AffectedUsers        int     `json:"affected_users"`
+	SLATargetPct         float64 `json:"sla_target_pct"`
+	RTOMinutes           int     `json:"rto_minutes"`
+	RPOMinutes           int     `json:"rpo_minutes"`
+	Description          string  `json:"description"`
+	BusinessValuePerHour float64 `json:"business_value_per_hour"`
 }
 type mappingInput struct {
 	SensorID         string  `json:"sensor_id"`
@@ -385,12 +468,22 @@ func (a *app) createService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Criticality = strings.ToUpper(in.Criticality)
-	if in.Name == "" || in.Criticality <= "" || !map[string]bool{"P1": true, "P2": true, "P3": true, "P4": true}[in.Criticality] {
+	if in.Name == "" || !map[string]bool{"P1": true, "P2": true, "P3": true, "P4": true}[in.Criticality] {
 		jsonOut(w, 400, map[string]any{"error": "name and criticality P1-P4 are required"})
 		return
 	}
+	if in.SLATargetPct == 0 {
+		in.SLATargetPct = 99.9
+	}
+	if in.RTOMinutes == 0 {
+		in.RTOMinutes = 60
+	}
+	if in.RPOMinutes == 0 {
+		in.RPOMinutes = 30
+	}
 	var id uuid.UUID
-	err := a.pool.QueryRow(r.Context(), `insert into business_services(organization_id,name,criticality) values($1,$2,$3) returning id`, org, in.Name, in.Criticality).Scan(&id)
+	err := a.pool.QueryRow(r.Context(), `insert into business_services(organization_id,name,criticality,owner_name,affected_users,sla_target_pct,rto_minutes,rpo_minutes,description,business_value_per_hour) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id`,
+		org, in.Name, in.Criticality, in.OwnerName, in.AffectedUsers, in.SLATargetPct, in.RTOMinutes, in.RPOMinutes, in.Description, in.BusinessValuePerHour).Scan(&id)
 	if err != nil {
 		jsonOut(w, 409, map[string]any{"error": err.Error()})
 		return
@@ -420,6 +513,15 @@ func (a *app) updateService(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, 400, map[string]any{"error": "name and criticality P1-P4 are required"})
 		return
 	}
+	if in.SLATargetPct == 0 {
+		in.SLATargetPct = 99.9
+	}
+	if in.RTOMinutes == 0 {
+		in.RTOMinutes = 60
+	}
+	if in.RPOMinutes == 0 {
+		in.RPOMinutes = 30
+	}
 	var oldName, oldCrit string
 	if err = a.pool.QueryRow(r.Context(), `select name,criticality from business_services where organization_id=$1 and id=$2`, org, id).Scan(&oldName, &oldCrit); err == pgx.ErrNoRows {
 		jsonOut(w, 404, map[string]any{"error": "service not found"})
@@ -428,7 +530,8 @@ func (a *app) updateService(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, 500, map[string]any{"error": err.Error()})
 		return
 	}
-	_, err = a.pool.Exec(r.Context(), `update business_services set name=$1,criticality=$2 where organization_id=$3 and id=$4`, in.Name, in.Criticality, org, id)
+	_, err = a.pool.Exec(r.Context(), `update business_services set name=$1,criticality=$2,owner_name=$3,affected_users=$4,sla_target_pct=$5,rto_minutes=$6,rpo_minutes=$7,description=$8,business_value_per_hour=$9 where organization_id=$10 and id=$11`,
+		in.Name, in.Criticality, in.OwnerName, in.AffectedUsers, in.SLATargetPct, in.RTOMinutes, in.RPOMinutes, in.Description, in.BusinessValuePerHour, org, id)
 	if err != nil {
 		jsonOut(w, 500, map[string]any{"error": err.Error()})
 		return
@@ -801,18 +904,18 @@ func (a *app) prtgWebhook(w http.ResponseWriter, r *http.Request) {
 // ─── Knowledge Base CRUD ────────────────────────────────────────────────────
 
 type kbInput struct {
-	DevicePattern              string   `json:"device_pattern"`
-	SensorPattern              string   `json:"sensor_pattern"`
-	ServiceCategory            string   `json:"service_category"`
-	Description                string   `json:"description"`
-	HourlyLossEstimate         float64  `json:"hourly_loss_estimate"`
-	AffectedUsersEstimate      int      `json:"affected_users_estimate"`
-	AffectedProcesses          []string `json:"affected_processes"`
-	SLAPenaltyPerHour          float64  `json:"sla_penalty_per_hour"`
-	RecoveryTimeEstimateMinutes int     `json:"recovery_time_estimate_minutes"`
-	RecoveryProcedure          string   `json:"recovery_procedure"`
-	Priority                   string   `json:"priority"`
-	IsActive                   bool     `json:"is_active"`
+	DevicePattern               string   `json:"device_pattern"`
+	SensorPattern               string   `json:"sensor_pattern"`
+	ServiceCategory             string   `json:"service_category"`
+	Description                 string   `json:"description"`
+	HourlyLossEstimate          float64  `json:"hourly_loss_estimate"`
+	AffectedUsersEstimate       int      `json:"affected_users_estimate"`
+	AffectedProcesses           []string `json:"affected_processes"`
+	SLAPenaltyPerHour           float64  `json:"sla_penalty_per_hour"`
+	RecoveryTimeEstimateMinutes int      `json:"recovery_time_estimate_minutes"`
+	RecoveryProcedure           string   `json:"recovery_procedure"`
+	Priority                    string   `json:"priority"`
+	IsActive                    bool     `json:"is_active"`
 }
 
 func (a *app) listKnowledgeBase(w http.ResponseWriter, r *http.Request) {
@@ -997,9 +1100,9 @@ func (a *app) aiAnalyze(w http.ResponseWriter, r *http.Request) {
 	defer kbRows.Close()
 	type kbEntry struct {
 		ID, DevicePattern, SensorPattern, ServiceCategory, Description, Priority, RecoveryProcedure string
-		HourlyLoss, SLAPenalty                                                                     float64
-		AffectedUsers, RecoveryMinutes                                                             int
-		AffectedProcesses                                                                          []string
+		HourlyLoss, SLAPenalty                                                                      float64
+		AffectedUsers, RecoveryMinutes                                                              int
+		AffectedProcesses                                                                           []string
 	}
 	var kbEntries []kbEntry
 	for kbRows.Next() {
@@ -1021,59 +1124,55 @@ func (a *app) aiAnalyze(w http.ResponseWriter, r *http.Request) {
 		kbEntries = append(kbEntries, e)
 	}
 
-	// Fetch down sensors
-	sRows, err := a.pool.Query(r.Context(), `SELECT id,prtg_sensor_id,device_name,sensor_name,last_known_state FROM prtg_sensors WHERE organization_id=$1 AND last_known_state='down' ORDER BY device_name`, org)
-	if err != nil {
-		jsonOut(w, 500, map[string]any{"error": err.Error()})
-		return
-	}
-	defer sRows.Close()
 	type sensorInfo struct {
 		ID, PRTGID, Device, Sensor, State string
 	}
 	var downSensors []sensorInfo
-	for sRows.Next() {
-		var s sensorInfo
-		var sid uuid.UUID
-		if err := sRows.Scan(&sid, &s.PRTGID, &s.Device, &s.Sensor, &s.State); err != nil {
+
+	if in.SensorID != "" {
+		// Specific sensor requested: analyze only that sensor, regardless of its current state.
+		sid, e := uuid.Parse(in.SensorID)
+		if e != nil {
+			jsonOut(w, 400, map[string]any{"error": "invalid sensor_id"})
+			return
+		}
+		var dev, name, state string
+		err = a.pool.QueryRow(r.Context(), `SELECT device_name,sensor_name,last_known_state FROM prtg_sensors WHERE organization_id=$1 AND id=$2`, org, sid).Scan(&dev, &name, &state)
+		if err != nil {
+			jsonOut(w, 404, map[string]any{"error": "sensor not found"})
+			return
+		}
+		downSensors = []sensorInfo{{ID: sid.String(), Device: dev, Sensor: name, State: state}}
+	} else {
+		// Fetch all currently down sensors
+		sRows, err := a.pool.Query(r.Context(), `SELECT id,prtg_sensor_id,device_name,sensor_name,last_known_state FROM prtg_sensors WHERE organization_id=$1 AND last_known_state='down' ORDER BY device_name`, org)
+		if err != nil {
 			jsonOut(w, 500, map[string]any{"error": err.Error()})
 			return
 		}
-		s.ID = sid.String()
-		downSensors = append(downSensors, s)
-	}
-
-	// If a specific sensor was requested, add it to analysis even if not down
-	if in.SensorID != "" {
-		sid, e := uuid.Parse(in.SensorID)
-		if e == nil {
-			var dev, name, state string
-			err = a.pool.QueryRow(r.Context(), `SELECT device_name,sensor_name,last_known_state FROM prtg_sensors WHERE organization_id=$1 AND id=$2`, org, sid).Scan(&dev, &name, &state)
-			if err == nil {
-				found := false
-				for _, s := range downSensors {
-					if s.ID == sid.String() {
-						found = true
-						break
-					}
-				}
-				if !found {
-					downSensors = append(downSensors, sensorInfo{ID: sid.String(), Device: dev, Sensor: name, State: state})
-				}
+		defer sRows.Close()
+		for sRows.Next() {
+			var s sensorInfo
+			var sid uuid.UUID
+			if err := sRows.Scan(&sid, &s.PRTGID, &s.Device, &s.Sensor, &s.State); err != nil {
+				jsonOut(w, 500, map[string]any{"error": err.Error()})
+				return
 			}
+			s.ID = sid.String()
+			downSensors = append(downSensors, s)
 		}
 	}
 
 	// Match sensors against knowledge base
 	type analysisResult struct {
-		Sensor           map[string]any   `json:"sensor"`
-		MatchedRules     []map[string]any `json:"matched_rules"`
-		TotalHourlyLoss  float64          `json:"total_hourly_loss"`
-		TotalSLAPenalty  float64          `json:"total_sla_penalty"`
-		AffectedUsers    int              `json:"affected_users"`
-		RecoveryMinutes  int              `json:"recovery_time_minutes"`
-		RiskLevel        string           `json:"risk_level"`
-		Recommendations  []string         `json:"recommendations"`
+		Sensor          map[string]any   `json:"sensor"`
+		MatchedRules    []map[string]any `json:"matched_rules"`
+		TotalHourlyLoss float64          `json:"total_hourly_loss"`
+		TotalSLAPenalty float64          `json:"total_sla_penalty"`
+		AffectedUsers   int              `json:"affected_users"`
+		RecoveryMinutes int              `json:"recovery_time_minutes"`
+		RiskLevel       string           `json:"risk_level"`
+		Recommendations []string         `json:"recommendations"`
 	}
 	var results []analysisResult
 	totalOrgImpact := 0.0
@@ -1142,4 +1241,602 @@ func (a *app) aiAnalyze(w http.ResponseWriter, r *http.Request) {
 		"analysis_timestamp":     time.Now().UTC(),
 	}
 	jsonOut(w, 200, map[string]any{"summary": summary, "analysis": results})
+}
+
+// ─── BIA: Executive Summary ───────────────────────────────────────────────────
+
+func (a *app) biaExecutiveSummary(w http.ResponseWriter, r *http.Request) {
+	org := orgID(r)
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+
+	// Total & critical services
+	var totalServices, criticalImpacted int
+	var estimatedUsersAffected int
+	rows, err := a.pool.Query(r.Context(), `
+		SELECT bs.id, bs.criticality, coalesce(bs.affected_users,0),
+			(SELECT count(*) FROM service_sensor_mapping m
+			 JOIN prtg_sensors ps ON ps.id=m.prtg_sensor_id
+			 WHERE m.organization_id=$1 AND m.business_service_id=bs.id
+			 AND ps.last_known_state IN ('down','warning')) as degraded_sensors,
+			(SELECT count(*) FROM service_sensor_mapping m2 WHERE m2.organization_id=$1 AND m2.business_service_id=bs.id) as total_sensors
+		FROM business_services bs WHERE bs.organization_id=$1`, org)
+	type svcRow struct {
+		id                     uuid.UUID
+		crit                   string
+		users, degraded, total int
+	}
+	var svcs []svcRow
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var s svcRow
+			if rows.Scan(&s.id, &s.crit, &s.users, &s.degraded, &s.total) == nil {
+				svcs = append(svcs, s)
+			}
+		}
+	}
+	for _, s := range svcs {
+		totalServices++
+		if s.degraded > 0 {
+			criticalImpacted++
+			estimatedUsersAffected += s.users
+		}
+	}
+	servicesNormal := totalServices - criticalImpacted
+
+	// SLA compliance: average availability this month across all services
+	var slaCompliance float64 = 100.0
+	monthMinutes := now.Sub(monthStart).Minutes()
+	if monthMinutes > 0 && len(svcs) > 0 {
+		slaRows, _ := a.pool.Query(r.Context(), `
+			SELECT bs.id, coalesce(sum(coalesce(i.duration_seconds,extract(epoch from (now()-i.started_at))::int)),0)/60.0 as downtime_min
+			FROM business_services bs
+			LEFT JOIN service_sensor_mapping m ON m.business_service_id=bs.id AND m.organization_id=$1
+			LEFT JOIN incidents i ON i.prtg_sensor_id=m.prtg_sensor_id AND i.organization_id=$1
+				AND i.started_at >= $2 AND i.status != 'CLOSED'
+			WHERE bs.organization_id=$1
+			GROUP BY bs.id`, org, monthStart)
+		if slaRows != nil {
+			defer slaRows.Close()
+			totalAvail := 0.0
+			count := 0
+			for slaRows.Next() {
+				var sid uuid.UUID
+				var dtMin float64
+				if slaRows.Scan(&sid, &dtMin) == nil {
+					avail := (monthMinutes - dtMin) / monthMinutes * 100
+					if avail > 100 {
+						avail = 100
+					}
+					totalAvail += avail
+					count++
+				}
+			}
+			if count > 0 {
+				slaCompliance = totalAvail / float64(count)
+			}
+		}
+	}
+
+	// Financial exposure this month (real-time aggregation from impact_calculations or active downtime × hourly business value)
+	var financialExposure float64
+	a.pool.QueryRow(r.Context(), `
+		SELECT coalesce(
+			NULLIF((SELECT sum(ic.total_impact) FROM impact_calculations ic JOIN incidents i ON i.id=ic.incident_id WHERE ic.organization_id=$1 AND i.started_at>=$2), 0),
+			(
+				SELECT coalesce(sum(
+					(coalesce(i.duration_seconds, extract(epoch from (now()-i.started_at))::int) / 3600.0) *
+					coalesce(bs.business_value_per_hour, fp.hourly_revenue, 15000000)
+				), 0)
+				FROM incidents i
+				LEFT JOIN LATERAL (
+					SELECT b.business_value_per_hour, b.id
+					FROM business_services b
+					JOIN service_sensor_mapping m ON m.business_service_id=b.id
+					WHERE m.organization_id=$1 AND m.prtg_sensor_id=i.prtg_sensor_id
+					ORDER BY m.dependency_weight DESC LIMIT 1
+				) bs ON true
+				LEFT JOIN financial_profiles fp ON fp.business_service_id=bs.id AND fp.organization_id=$1 AND fp.valid_to IS NULL
+				WHERE i.organization_id=$1 AND i.started_at>=$2 AND i.status!='CLOSED'
+			),
+			0
+		)`, org, monthStart).Scan(&financialExposure)
+
+	// Open critical incidents
+	var openCritical int
+	a.pool.QueryRow(r.Context(), `SELECT count(*) FROM incidents WHERE organization_id=$1 AND severity='CRITICAL' AND status IN ('OPEN','ACKNOWLEDGED')`, org).Scan(&openCritical)
+
+	jsonOut(w, 200, map[string]any{
+		"services_normal":            servicesNormal,
+		"services_total":             totalServices,
+		"critical_services_impacted": criticalImpacted,
+		"estimated_users_affected":   estimatedUsersAffected,
+		"sla_compliance_pct":         slaCompliance,
+		"financial_exposure":         financialExposure,
+		"open_critical_incidents":    openCritical,
+	})
+}
+
+// ─── BIA: Service Impact ──────────────────────────────────────────────────────
+
+func (a *app) biaServiceImpact(w http.ResponseWriter, r *http.Request) {
+	org := orgID(r)
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+
+	rows, err := a.pool.Query(r.Context(), `
+		SELECT
+			bs.id, bs.name, bs.criticality,
+			coalesce(bs.owner_name,''),
+			coalesce(bs.affected_users,0),
+			coalesce(bs.sla_target_pct,99.9),
+			coalesce(bs.description,''),
+			coalesce(bs.business_value_per_hour,0),
+			count(m.prtg_sensor_id) as total_sensors,
+			count(ps.id) FILTER (WHERE ps.last_known_state='down') as sensors_down,
+			count(ps.id) FILTER (WHERE ps.last_known_state='warning') as sensors_warning,
+			coalesce(SUM(coalesce(i.duration_seconds,extract(epoch from (now()-i.started_at))::int)) FILTER (WHERE i.id IS NOT NULL AND i.started_at>=$2),0)::numeric/60.0 as downtime_min_month
+		FROM business_services bs
+		LEFT JOIN service_sensor_mapping m ON m.business_service_id=bs.id AND m.organization_id=$1
+		LEFT JOIN prtg_sensors ps ON ps.id=m.prtg_sensor_id
+		LEFT JOIN incidents i ON i.prtg_sensor_id=m.prtg_sensor_id AND i.organization_id=$1 AND i.started_at>=$2 AND i.status!='CLOSED'
+		WHERE bs.organization_id=$1
+		GROUP BY bs.id, bs.name, bs.criticality, bs.owner_name, bs.affected_users, bs.sla_target_pct, bs.description, bs.business_value_per_hour
+		ORDER BY bs.criticality, bs.name`, org, monthStart)
+	if err != nil {
+		jsonOut(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	monthMinutes := now.Sub(monthStart).Minutes()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id uuid.UUID
+		var name, crit, owner, desc string
+		var users, totalSensors, sensorsDown, sensorsWarning int
+		var slaTarget, bvph, downtimeMin float64
+		if err := rows.Scan(&id, &name, &crit, &owner, &users, &slaTarget, &desc, &bvph, &totalSensors, &sensorsDown, &sensorsWarning, &downtimeMin); err != nil {
+			jsonOut(w, 500, map[string]any{"error": err.Error()})
+			return
+		}
+		status := "normal"
+		if sensorsDown > 0 {
+			status = "down"
+		} else if sensorsWarning > 0 {
+			status = "degraded"
+		}
+		var availPct float64 = 100.0
+		if monthMinutes > 0 {
+			availPct = (monthMinutes - downtimeMin) / monthMinutes * 100
+			if availPct > 100 {
+				availPct = 100
+			}
+		}
+		impact := ""
+		switch crit {
+		case "P1":
+			impact = "Critical revenue & operations impacted"
+		case "P2":
+			impact = "Significant business process disruption"
+		case "P3":
+			impact = "Minor operational impact"
+		default:
+			impact = "Low business impact"
+		}
+		if status != "normal" && desc != "" {
+			impact = desc
+		}
+		out = append(out, map[string]any{
+			"service_id": id, "service_name": name, "status": status, "priority": crit,
+			"owner": owner, "affected_users": users, "sla_target_pct": slaTarget,
+			"availability_pct": availPct, "business_impact": impact,
+			"business_value_per_hour": bvph,
+			"sensor_count":            totalSensors, "sensors_down": sensorsDown, "sensors_warning": sensorsWarning,
+			"downtime_minutes_month": downtimeMin,
+		})
+	}
+	jsonOut(w, 200, map[string]any{"items": out})
+}
+
+// ─── BIA: Incident Priority Scoring ──────────────────────────────────────────
+
+func (a *app) biaIncidentPriority(w http.ResponseWriter, r *http.Request) {
+	org := orgID(r)
+	rows, err := a.pool.Query(r.Context(), `
+		SELECT
+			i.id, i.status, i.severity, i.started_at,
+			coalesce(i.duration_seconds, extract(epoch from (now()-i.started_at))::int) as dur,
+			s.device_name, s.sensor_name,
+			coalesce(bs.name,'Unmapped'), coalesce(bs.criticality,'P4'),
+			coalesce(bs.affected_users,0), coalesce(bs.business_value_per_hour,0),
+			coalesce(ic.total_impact,0)
+		FROM incidents i
+		JOIN prtg_sensors s ON s.id=i.prtg_sensor_id
+		LEFT JOIN LATERAL (
+			SELECT b.name,b.criticality,b.affected_users,b.business_value_per_hour
+			FROM business_services b
+			JOIN service_sensor_mapping m ON m.business_service_id=b.id
+			WHERE m.organization_id=$1 AND m.prtg_sensor_id=i.prtg_sensor_id
+			ORDER BY m.dependency_weight DESC LIMIT 1
+		) bs ON true
+		LEFT JOIN LATERAL (
+			SELECT c.total_impact FROM impact_calculations c
+			WHERE c.organization_id=$1 AND c.incident_id=i.id
+			ORDER BY c.calculated_at DESC LIMIT 1
+		) ic ON true
+		WHERE i.organization_id=$1 AND i.status IN ('OPEN','ACKNOWLEDGED')
+		ORDER BY i.started_at DESC LIMIT 50`, org)
+	if err != nil {
+		jsonOut(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id uuid.UUID
+		var status, severity, device, sensor, svcName, crit string
+		var started time.Time
+		var dur, users int
+		var bvph, impact float64
+		if err := rows.Scan(&id, &status, &severity, &started, &dur, &device, &sensor, &svcName, &crit, &users, &bvph, &impact); err != nil {
+			jsonOut(w, 500, map[string]any{"error": err.Error()})
+			return
+		}
+		if impact <= 0 {
+			rate := bvph
+			if rate <= 0 {
+				switch crit {
+				case "P1":
+					rate = 50000000
+				case "P2":
+					rate = 20000000
+				case "P3":
+					rate = 8000000
+				default:
+					rate = 3000000
+				}
+			}
+			impact = (float64(dur) / 3600.0) * rate
+		}
+		// Score factors (1-5)
+		critScore := map[string]int{"P1": 5, "P2": 4, "P3": 3, "P4": 2}[crit]
+		if critScore == 0 {
+			critScore = 1
+		}
+		userScore := 1
+		switch {
+		case users >= 500:
+			userScore = 5
+		case users >= 200:
+			userScore = 4
+		case users >= 50:
+			userScore = 3
+		case users >= 10:
+			userScore = 2
+		}
+		finScore := 1
+		switch {
+		case impact >= 500000000:
+			finScore = 5
+		case impact >= 100000000:
+			finScore = 4
+		case impact >= 50000000:
+			finScore = 3
+		case impact >= 10000000:
+			finScore = 2
+		}
+		urgScore := 1
+		switch severity {
+		case "CRITICAL":
+			urgScore = 5
+		case "MAJOR":
+			urgScore = 4
+		case "MINOR":
+			urgScore = 3
+		case "WARNING":
+			urgScore = 2
+		}
+		totalScore := critScore * userScore * finScore * urgScore
+		priority := "P4"
+		switch {
+		case totalScore >= 300:
+			priority = "P1"
+		case totalScore >= 150:
+			priority = "P2"
+		case totalScore >= 50:
+			priority = "P3"
+		}
+		out = append(out, map[string]any{
+			"incident_id": id, "status": status, "severity": severity, "started_at": started,
+			"duration_seconds": dur, "device": device, "sensor": sensor,
+			"service_name": svcName, "criticality": crit,
+			"affected_users": users, "financial_impact": impact,
+			"score_criticality": critScore, "score_user_impact": userScore,
+			"score_financial": finScore, "score_urgency": urgScore,
+			"priority_score": totalScore, "recovery_priority": priority,
+		})
+	}
+	jsonOut(w, 200, map[string]any{"items": out})
+}
+
+// ─── BIA: SLA & Downtime Analysis ─────────────────────────────────────────────
+
+func (a *app) biaSLAAnalysis(w http.ResponseWriter, r *http.Request) {
+	org := orgID(r)
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	monthMinutes := now.Sub(monthStart).Minutes()
+
+	rows, err := a.pool.Query(r.Context(), `
+		SELECT
+			bs.name, coalesce(bs.sla_target_pct,99.9), coalesce(bs.rto_minutes,60), coalesce(bs.rpo_minutes,30),
+			coalesce(sum(coalesce(i.duration_seconds,extract(epoch from (now()-i.started_at))::int)) FILTER (WHERE i.id IS NOT NULL AND i.started_at>=$2),0)::float/60.0 as downtime_min,
+			coalesce(avg(coalesce(i.duration_seconds,0)) FILTER (WHERE i.ended_at IS NOT NULL AND i.started_at>=$2),0)::float/60.0 as avg_mttr_min,
+			count(i.id) FILTER (WHERE i.started_at>=$2) as incident_count_month
+		FROM business_services bs
+		LEFT JOIN service_sensor_mapping m ON m.business_service_id=bs.id AND m.organization_id=$1
+		LEFT JOIN incidents i ON i.prtg_sensor_id=m.prtg_sensor_id AND i.organization_id=$1 AND i.status!='CLOSED'
+		WHERE bs.organization_id=$1
+		GROUP BY bs.id, bs.name, bs.sla_target_pct, bs.rto_minutes, bs.rpo_minutes
+		ORDER BY bs.criticality, bs.name`, org, monthStart)
+	if err != nil {
+		jsonOut(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var name string
+		var slaTarget, rto, rpo float64
+		var downtimeMin, mttrMin float64
+		var incidentCount int
+		if err := rows.Scan(&name, &slaTarget, &rto, &rpo, &downtimeMin, &mttrMin, &incidentCount); err != nil {
+			jsonOut(w, 500, map[string]any{"error": err.Error()})
+			return
+		}
+		availPct := 100.0
+		if monthMinutes > 0 {
+			availPct = (monthMinutes - downtimeMin) / monthMinutes * 100
+			if availPct > 100 {
+				availPct = 100
+			}
+		}
+		allowedDowntime := (100.0 - slaTarget) / 100.0 * monthMinutes
+		remaining := allowedDowntime - downtimeMin
+		slaStatus := "healthy"
+		if availPct < slaTarget {
+			slaStatus = "breached"
+		} else if remaining < 30 {
+			slaStatus = "at_risk"
+		}
+		// MTBF: if incidents > 0, estimate MTBF = (month minutes - downtime) / incidents
+		mtbfHours := 0.0
+		if incidentCount > 0 {
+			mtbfHours = (monthMinutes - downtimeMin) / float64(incidentCount) / 60.0
+		}
+		out = append(out, map[string]any{
+			"service_name":            name,
+			"sla_target_pct":          slaTarget,
+			"availability_actual_pct": availPct,
+			"downtime_minutes_month":  downtimeMin,
+			"remaining_allowance_min": remaining,
+			"allowed_downtime_min":    allowedDowntime,
+			"mttr_minutes":            mttrMin,
+			"mtbf_hours":              mtbfHours,
+			"incident_count_month":    incidentCount,
+			"rto_minutes":             rto,
+			"rpo_minutes":             rpo,
+			"status":                  slaStatus,
+		})
+	}
+	jsonOut(w, 200, map[string]any{"items": out})
+}
+
+// ─── BIA: Financial Impact Estimation ─────────────────────────────────────────
+
+func (a *app) biaFinancialImpact(w http.ResponseWriter, r *http.Request) {
+	org := orgID(r)
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+
+	rows, err := a.pool.Query(r.Context(), `
+		SELECT
+			bs.name, bs.criticality, coalesce(bs.business_value_per_hour,0),
+			coalesce(fp.hourly_revenue,0), coalesce(fp.service_dependency,1), coalesce(fp.loss_probability,1),
+			coalesce(fp.operational_cost_per_hour,0), coalesce(fp.penalty_config->>'fixed','0')::numeric,
+			coalesce(fp.affected_employees,0), coalesce(fp.avg_employee_cost_per_hour,0),
+			coalesce(sum(coalesce(i.duration_seconds,extract(epoch from (now()-i.started_at))::int)) FILTER (WHERE i.id IS NOT NULL AND i.started_at>=$2),0)::float/60.0 as downtime_min
+		FROM business_services bs
+		LEFT JOIN financial_profiles fp ON fp.business_service_id=bs.id AND fp.organization_id=$1 AND fp.valid_to IS NULL
+		LEFT JOIN service_sensor_mapping m ON m.business_service_id=bs.id AND m.organization_id=$1
+		LEFT JOIN incidents i ON i.prtg_sensor_id=m.prtg_sensor_id AND i.organization_id=$1 AND i.status!='CLOSED'
+		WHERE bs.organization_id=$1
+		GROUP BY bs.id, bs.name, bs.criticality, bs.business_value_per_hour, fp.hourly_revenue, fp.service_dependency, fp.loss_probability, fp.operational_cost_per_hour, fp.penalty_config, fp.affected_employees, fp.avg_employee_cost_per_hour
+		ORDER BY bs.criticality, bs.name`, org, monthStart)
+	if err != nil {
+		jsonOut(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var name, crit string
+		var bvph, hrRev, svcDep, lossPb, opCost, penalty, empCostPh float64
+		var employees int
+		var downtimeMin float64
+		if err := rows.Scan(&name, &crit, &bvph, &hrRev, &svcDep, &lossPb, &opCost, &penalty, &employees, &empCostPh, &downtimeMin); err != nil {
+			jsonOut(w, 500, map[string]any{"error": err.Error()})
+			return
+		}
+		downtimeHours := downtimeMin / 60.0
+		// Revenue loss: hourly_revenue × downtime_hours × service_dependency × loss_probability
+		revLoss := hrRev * downtimeHours * svcDep * lossPb
+		// Business value loss: business_value_per_hour × downtime_hours × impact%
+		bizLoss := bvph * downtimeHours
+		// Productivity loss: employees × downtime_hours × avg_cost_per_hour
+		prodLoss := float64(employees) * downtimeHours * empCostPh
+		// Operational cost
+		opLoss := opCost * downtimeHours
+		// SLA penalties (fixed per incident, simplified)
+		totalEstimate := revLoss + bizLoss + prodLoss + opLoss + penalty
+		out = append(out, map[string]any{
+			"service_name":               name,
+			"criticality":                crit,
+			"downtime_minutes":           downtimeMin,
+			"downtime_hours":             downtimeHours,
+			"revenue_loss":               revLoss,
+			"business_value_loss":        bizLoss,
+			"productivity_loss":          prodLoss,
+			"operational_cost_loss":      opLoss,
+			"sla_penalty":                penalty,
+			"total_estimated_loss":       totalEstimate,
+			"affected_employees":         employees,
+			"avg_employee_cost_per_hour": empCostPh,
+		})
+	}
+	jsonOut(w, 200, map[string]any{"items": out})
+}
+
+// ─── Impact Matrix CRUD ───────────────────────────────────────────────────────
+
+type impactMatrixInput struct {
+	TechnicalCondition string   `json:"technical_condition"`
+	OperationalImpact  string   `json:"operational_impact"`
+	BusinessImpact     string   `json:"business_impact"`
+	AffectedServices   []string `json:"affected_services"`
+	Severity           string   `json:"severity"`
+	SortOrder          int      `json:"sort_order"`
+	IsActive           bool     `json:"is_active"`
+}
+
+func (a *app) listImpactMatrix(w http.ResponseWriter, r *http.Request) {
+	org := orgID(r)
+	rows, err := a.pool.Query(r.Context(), `SELECT id,technical_condition,operational_impact,business_impact,coalesce(affected_services,'{}'),severity,sort_order,is_active,created_at,updated_at FROM impact_matrix_entries WHERE organization_id=$1 ORDER BY sort_order,technical_condition`, org)
+	if err != nil {
+		jsonOut(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id uuid.UUID
+		var tc, oi, bi, sev string
+		var svcs []string
+		var sortOrder int
+		var isActive bool
+		var createdAt, updatedAt time.Time
+		if err := rows.Scan(&id, &tc, &oi, &bi, &svcs, &sev, &sortOrder, &isActive, &createdAt, &updatedAt); err != nil {
+			jsonOut(w, 500, map[string]any{"error": err.Error()})
+			return
+		}
+		if svcs == nil {
+			svcs = []string{}
+		}
+		out = append(out, map[string]any{
+			"id": id, "technical_condition": tc, "operational_impact": oi, "business_impact": bi,
+			"affected_services": svcs, "severity": sev, "sort_order": sortOrder,
+			"is_active": isActive, "created_at": createdAt, "updated_at": updatedAt,
+		})
+	}
+	jsonOut(w, 200, map[string]any{"items": out})
+}
+
+func (a *app) createImpactMatrix(w http.ResponseWriter, r *http.Request) {
+	if err := adminOnly(r); err != nil {
+		jsonOut(w, 403, map[string]any{"error": err.Error()})
+		return
+	}
+	org := orgID(r)
+	var in impactMatrixInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		jsonOut(w, 400, map[string]any{"error": "invalid JSON"})
+		return
+	}
+	if in.TechnicalCondition == "" || in.BusinessImpact == "" {
+		jsonOut(w, 400, map[string]any{"error": "technical_condition and business_impact are required"})
+		return
+	}
+	sevs := map[string]bool{"INFO": true, "WARNING": true, "MINOR": true, "MAJOR": true, "CRITICAL": true}
+	if !sevs[in.Severity] {
+		in.Severity = "MAJOR"
+	}
+	if in.AffectedServices == nil {
+		in.AffectedServices = []string{}
+	}
+	var id uuid.UUID
+	err := a.pool.QueryRow(r.Context(), `INSERT INTO impact_matrix_entries(organization_id,technical_condition,operational_impact,business_impact,affected_services,severity,sort_order,is_active) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+		org, in.TechnicalCondition, in.OperationalImpact, in.BusinessImpact, in.AffectedServices, in.Severity, in.SortOrder, true).Scan(&id)
+	if err != nil {
+		jsonOut(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	_ = audit.Record(r.Context(), a.pool, org, "admin", "impact_matrix.create", "impact_matrix_entries", &id, nil, in)
+	jsonOut(w, 201, map[string]any{"id": id})
+}
+
+func (a *app) updateImpactMatrix(w http.ResponseWriter, r *http.Request) {
+	if err := adminOnly(r); err != nil {
+		jsonOut(w, 403, map[string]any{"error": err.Error()})
+		return
+	}
+	id, err := pathID(r, "/api/v1/impact-matrix/")
+	if err != nil {
+		jsonOut(w, 400, map[string]any{"error": "invalid id"})
+		return
+	}
+	org := orgID(r)
+	var in impactMatrixInput
+	if err = json.NewDecoder(r.Body).Decode(&in); err != nil {
+		jsonOut(w, 400, map[string]any{"error": "invalid JSON"})
+		return
+	}
+	if in.TechnicalCondition == "" || in.BusinessImpact == "" {
+		jsonOut(w, 400, map[string]any{"error": "technical_condition and business_impact are required"})
+		return
+	}
+	sevs := map[string]bool{"INFO": true, "WARNING": true, "MINOR": true, "MAJOR": true, "CRITICAL": true}
+	if !sevs[in.Severity] {
+		in.Severity = "MAJOR"
+	}
+	if in.AffectedServices == nil {
+		in.AffectedServices = []string{}
+	}
+	cmd, err := a.pool.Exec(r.Context(), `UPDATE impact_matrix_entries SET technical_condition=$1,operational_impact=$2,business_impact=$3,affected_services=$4,severity=$5,sort_order=$6,is_active=$7 WHERE organization_id=$8 AND id=$9`,
+		in.TechnicalCondition, in.OperationalImpact, in.BusinessImpact, in.AffectedServices, in.Severity, in.SortOrder, in.IsActive, org, id)
+	if err != nil {
+		jsonOut(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	if cmd.RowsAffected() == 0 {
+		jsonOut(w, 404, map[string]any{"error": "entry not found"})
+		return
+	}
+	_ = audit.Record(r.Context(), a.pool, org, "admin", "impact_matrix.update", "impact_matrix_entries", &id, nil, in)
+	jsonOut(w, 200, map[string]any{"id": id})
+}
+
+func (a *app) deleteImpactMatrix(w http.ResponseWriter, r *http.Request) {
+	if err := adminOnly(r); err != nil {
+		jsonOut(w, 403, map[string]any{"error": err.Error()})
+		return
+	}
+	id, err := pathID(r, "/api/v1/impact-matrix/")
+	if err != nil {
+		jsonOut(w, 400, map[string]any{"error": "invalid id"})
+		return
+	}
+	org := orgID(r)
+	cmd, err := a.pool.Exec(r.Context(), `DELETE FROM impact_matrix_entries WHERE organization_id=$1 AND id=$2`, org, id)
+	if err != nil {
+		jsonOut(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	if cmd.RowsAffected() == 0 {
+		jsonOut(w, 404, map[string]any{"error": "entry not found"})
+		return
+	}
+	_ = audit.Record(r.Context(), a.pool, org, "admin", "impact_matrix.delete", "impact_matrix_entries", &id, nil, nil)
+	w.WriteHeader(http.StatusNoContent)
 }
