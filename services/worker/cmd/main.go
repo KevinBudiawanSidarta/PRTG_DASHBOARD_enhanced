@@ -77,6 +77,7 @@ func (w *worker) processEvent(ctx context.Context, eventID string) {
 		sev := incident.SeverityFor(dep, 0)
 		if err = w.pool.QueryRow(ctx, `insert into incidents(organization_id,prtg_sensor_id,status,severity,started_at) values($1,$2,'OPEN',$3,$4) returning id`, org, sensorID, string(sev), occurred).Scan(&incID); err == nil {
 			_, _ = w.pool.Exec(ctx, `insert into incident_events(organization_id,incident_id,event_type,actor,metadata) values($1,$2,'created','system',$3)`, org, incID, `{"source":"collector"}`)
+			w.correlateIncident(ctx, org, incID, occurred)
 		}
 	}
 	if err == nil && state == "up" && status == string(incident.Acknowledged) {
@@ -94,6 +95,50 @@ func (w *worker) processEvent(ctx context.Context, eventID string) {
 		_, _ = w.pool.Exec(ctx, `update incidents set severity=$1 where id=$2`, string(sev), incID)
 	}
 }
+
+// correlateIncident groups a newly-created incident with any other
+// currently-open incidents that started within incident.CorrelationWindow
+// of it — a temporal heuristic for likely shared-root-cause "incident
+// storms" (e.g. one switch failing takes many dependent sensors down at
+// once), since the platform has no real network topology graph.
+func (w *worker) correlateIncident(ctx context.Context, org string, incID uuid.UUID, occurred time.Time) {
+	windowStart := occurred.Add(-incident.CorrelationWindow)
+	windowEnd := occurred.Add(incident.CorrelationWindow)
+	rows, err := w.pool.Query(ctx, `
+		select id, correlation_group_id from incidents
+		where organization_id=$1 and id!=$2 and status in ('OPEN','ACKNOWLEDGED')
+		and started_at between $3 and $4`, org, incID, windowStart, windowEnd)
+	if err != nil {
+		w.log.Error("correlation lookup failed", "organization_id", org, "component", "worker", "error", err)
+		return
+	}
+	var groupID uuid.UUID
+	var toBackfill []uuid.UUID
+	for rows.Next() {
+		var otherID uuid.UUID
+		var existingGroup *uuid.UUID
+		if err := rows.Scan(&otherID, &existingGroup); err != nil {
+			continue
+		}
+		if existingGroup != nil {
+			groupID = *existingGroup
+		} else {
+			toBackfill = append(toBackfill, otherID)
+		}
+	}
+	rows.Close()
+	if groupID == uuid.Nil && len(toBackfill) == 0 {
+		return // no other incidents nearby in time - stays uncorrelated
+	}
+	if groupID == uuid.Nil {
+		groupID = uuid.New()
+	}
+	_, _ = w.pool.Exec(ctx, `update incidents set correlation_group_id=$1 where id=$2`, groupID, incID)
+	for _, id := range toBackfill {
+		_, _ = w.pool.Exec(ctx, `update incidents set correlation_group_id=$1 where id=$2`, groupID, id)
+	}
+}
+
 func (w *worker) serviceDependency(ctx context.Context, org, sensor string) float64 {
 	var x float64
 	_ = w.pool.QueryRow(ctx, `select coalesce(max(dependency_weight),1) from service_sensor_mapping where organization_id=$1 and prtg_sensor_id=$2`, org, sensor).Scan(&x)

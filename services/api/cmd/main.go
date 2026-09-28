@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/example/bia-platform/internal/aiagent"
 	"github.com/example/bia-platform/internal/analytics"
 	"github.com/example/bia-platform/internal/audit"
 	"github.com/example/bia-platform/internal/auth"
@@ -59,10 +60,12 @@ func main() {
 	mux.Handle("PUT /api/v1/knowledge-base/", auth.WithOrg(http.HandlerFunc(a.updateKnowledgeBase)))
 	mux.Handle("DELETE /api/v1/knowledge-base/", auth.WithOrg(http.HandlerFunc(a.deleteKnowledgeBase)))
 	mux.Handle("POST /api/v1/ai/analyze", auth.WithOrg(http.HandlerFunc(a.aiAnalyze)))
+	mux.Handle("POST /api/v1/ai/chat", auth.WithOrg(http.HandlerFunc(a.aiChat)))
 	// ── BIA Endpoints ──
 	mux.Handle("GET /api/v1/bia/executive-summary", auth.WithOrg(http.HandlerFunc(a.biaExecutiveSummary)))
 	mux.Handle("GET /api/v1/bia/service-impact", auth.WithOrg(http.HandlerFunc(a.biaServiceImpact)))
 	mux.Handle("GET /api/v1/bia/incident-priority", auth.WithOrg(http.HandlerFunc(a.biaIncidentPriority)))
+	mux.Handle("GET /api/v1/bia/incident-correlation", auth.WithOrg(http.HandlerFunc(a.biaIncidentCorrelation)))
 	mux.Handle("GET /api/v1/bia/sla-analysis", auth.WithOrg(http.HandlerFunc(a.biaSLAAnalysis)))
 	mux.Handle("GET /api/v1/bia/financial-impact", auth.WithOrg(http.HandlerFunc(a.biaFinancialImpact)))
 	mux.Handle("GET /api/v1/impact-matrix", auth.WithOrg(http.HandlerFunc(a.listImpactMatrix)))
@@ -124,7 +127,7 @@ func (a *app) incidents(w http.ResponseWriter, r *http.Request) {
 	cursor := r.URL.Query().Get("cursor")
 	var rows pgx.Rows
 	var err error
-	base := `select i.id,i.status,i.severity,i.started_at,i.ended_at,coalesce(i.duration_seconds,extract(epoch from (now()-i.started_at))::int),s.device_name,s.sensor_name,coalesce(bs.name,''),coalesce(bs.criticality,'P4'),coalesce(ic.total_impact,0),coalesce(im.version,'') from incidents i join prtg_sensors s on s.id=i.prtg_sensor_id left join lateral (select b.id,b.name,b.criticality from business_services b join service_sensor_mapping m on m.business_service_id=b.id where m.organization_id=$1 and m.prtg_sensor_id=i.prtg_sensor_id order by m.dependency_weight desc limit 1) bs on true left join lateral (select c.total_impact,c.impact_model_id from impact_calculations c where c.organization_id=$1 and c.incident_id=i.id order by c.calculated_at desc limit 1) ic on true left join impact_models im on im.id=ic.impact_model_id where i.organization_id=$1`
+	base := `select i.id,i.status,i.severity,i.started_at,i.ended_at,coalesce(i.duration_seconds,extract(epoch from (now()-i.started_at))::int),s.device_name,s.sensor_name,coalesce(bs.name,''),coalesce(bs.criticality,'P4'),coalesce(ic.total_impact,0),coalesce(im.version,''),i.correlation_group_id,(select count(*) from incidents i2 where i2.organization_id=$1 and i2.correlation_group_id=i.correlation_group_id) from incidents i join prtg_sensors s on s.id=i.prtg_sensor_id left join lateral (select b.id,b.name,b.criticality from business_services b join service_sensor_mapping m on m.business_service_id=b.id where m.organization_id=$1 and m.prtg_sensor_id=i.prtg_sensor_id order by m.dependency_weight desc limit 1) bs on true left join lateral (select c.total_impact,c.impact_model_id from impact_calculations c where c.organization_id=$1 and c.incident_id=i.id order by c.calculated_at desc limit 1) ic on true left join impact_models im on im.id=ic.impact_model_id where i.organization_id=$1`
 	args := []any{org}
 	if cursor != "" {
 		t, id, ok := decodeCursor(cursor)
@@ -153,11 +156,13 @@ func (a *app) incidents(w http.ResponseWriter, r *http.Request) {
 		var dur int
 		var device, sensor, service, criticality, model string
 		var impact float64
-		if err := rows.Scan(&id, &status, &severity, &started, &ended, &dur, &device, &sensor, &service, &criticality, &impact, &model); err != nil {
+		var correlationGroup *uuid.UUID
+		var groupSize int
+		if err := rows.Scan(&id, &status, &severity, &started, &ended, &dur, &device, &sensor, &service, &criticality, &impact, &model, &correlationGroup, &groupSize); err != nil {
 			jsonOut(w, 500, map[string]any{"error": err.Error()})
 			return
 		}
-		m := map[string]any{"id": id, "status": status, "severity": severity, "started_at": started, "ended_at": ended, "duration_seconds": dur, "sensor": map[string]any{"device": device, "name": sensor}, "service": map[string]any{"name": service, "criticality": criticality}, "total_impact": impact, "model_version": model}
+		m := map[string]any{"id": id, "status": status, "severity": severity, "started_at": started, "ended_at": ended, "duration_seconds": dur, "sensor": map[string]any{"device": device, "name": sensor}, "service": map[string]any{"name": service, "criticality": criticality}, "total_impact": impact, "model_version": model, "correlation_group_id": correlationGroup, "correlated_incident_count": groupSize}
 		items = append(items, m)
 		if len(items) == limit+1 {
 			lastTime = *started
@@ -209,7 +214,8 @@ func (a *app) incidentByID(w http.ResponseWriter, r *http.Request) {
 	var dur int
 	var serviceID *uuid.UUID
 	var service, criticality string
-	err = a.pool.QueryRow(r.Context(), `select i.status,i.severity,s.device_name,s.sensor_name,i.started_at,i.ended_at,coalesce(i.duration_seconds,extract(epoch from(now()-i.started_at))::int),bs.id,coalesce(bs.name,''),coalesce(bs.criticality,'P4') from incidents i join prtg_sensors s on s.id=i.prtg_sensor_id left join lateral(select b.id,b.name,b.criticality from business_services b join service_sensor_mapping m on m.business_service_id=b.id where m.organization_id=$1 and m.prtg_sensor_id=i.prtg_sensor_id order by m.dependency_weight desc limit 1) bs on true where i.organization_id=$1 and i.id=$2`, org, id).Scan(&status, &severity, &device, &sensor, &started, &ended, &dur, &serviceID, &service, &criticality)
+	var correlationGroup *uuid.UUID
+	err = a.pool.QueryRow(r.Context(), `select i.status,i.severity,s.device_name,s.sensor_name,i.started_at,i.ended_at,coalesce(i.duration_seconds,extract(epoch from(now()-i.started_at))::int),bs.id,coalesce(bs.name,''),coalesce(bs.criticality,'P4'),i.correlation_group_id from incidents i join prtg_sensors s on s.id=i.prtg_sensor_id left join lateral(select b.id,b.name,b.criticality from business_services b join service_sensor_mapping m on m.business_service_id=b.id where m.organization_id=$1 and m.prtg_sensor_id=i.prtg_sensor_id order by m.dependency_weight desc limit 1) bs on true where i.organization_id=$1 and i.id=$2`, org, id).Scan(&status, &severity, &device, &sensor, &started, &ended, &dur, &serviceID, &service, &criticality, &correlationGroup)
 	if err == pgx.ErrNoRows {
 		jsonOut(w, 404, map[string]any{"error": "incident not found"})
 		return
@@ -217,6 +223,23 @@ func (a *app) incidentByID(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonOut(w, 500, map[string]any{"error": err.Error()})
 		return
+	}
+	var correlated []map[string]any
+	if correlationGroup != nil {
+		crows, err := a.pool.Query(r.Context(), `select i2.id,i2.severity,i2.status,s2.device_name,s2.sensor_name,coalesce(bs2.name,'') from incidents i2 join prtg_sensors s2 on s2.id=i2.prtg_sensor_id left join lateral(select b.name from business_services b join service_sensor_mapping m on m.business_service_id=b.id where m.organization_id=$1 and m.prtg_sensor_id=i2.prtg_sensor_id order by m.dependency_weight desc limit 1) bs2 on true where i2.organization_id=$1 and i2.correlation_group_id=$2 and i2.id!=$3 order by i2.started_at`, org, correlationGroup, id)
+		if err == nil {
+			for crows.Next() {
+				var cid uuid.UUID
+				var csev, cstatus, cdev, csensor, csvc string
+				if crows.Scan(&cid, &csev, &cstatus, &cdev, &csensor, &csvc) == nil {
+					correlated = append(correlated, map[string]any{"id": cid, "severity": csev, "status": cstatus, "sensor": map[string]any{"device": cdev, "name": csensor}, "service": csvc})
+				}
+			}
+			crows.Close()
+		}
+	}
+	if correlated == nil {
+		correlated = []map[string]any{}
 	}
 	var model, breakdownJSON, snapshotJSON string
 	var total, confidence float64
@@ -228,7 +251,7 @@ func (a *app) incidentByID(w http.ResponseWriter, r *http.Request) {
 	if err == pgx.ErrNoRows {
 		impact = nil
 	}
-	jsonOut(w, 200, map[string]any{"id": id, "status": status, "severity": severity, "started_at": started, "ended_at": ended, "duration_seconds": dur, "sensor": map[string]any{"device": device, "name": sensor}, "service": map[string]any{"name": service, "criticality": criticality}, "impact": impact})
+	jsonOut(w, 200, map[string]any{"id": id, "status": status, "severity": severity, "started_at": started, "ended_at": ended, "duration_seconds": dur, "sensor": map[string]any{"device": device, "name": sensor}, "service": map[string]any{"name": service, "criticality": criticality}, "impact": impact, "correlation_group_id": correlationGroup, "correlated_incidents": correlated})
 }
 
 func (a *app) incidentAction(w http.ResponseWriter, r *http.Request) {
@@ -1243,6 +1266,177 @@ func (a *app) aiAnalyze(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, 200, map[string]any{"summary": summary, "analysis": results})
 }
 
+// ─── AI Chatbot (RAG) ──────────────────────────────────────────────────────────
+
+const aiChatSystemPreamble = `Anda adalah asisten Business Impact Analysis untuk BIA Platform, sebuah dashboard yang menghubungkan monitoring infrastruktur IT (PRTG) dengan dampak bisnis dan kerugian finansial.
+
+Jawab pertanyaan pengguna HANYA berdasarkan data snapshot di bawah ini. Jangan mengarang angka. Kalau data yang ditanyakan tidak ada di snapshot, katakan terus terang bahwa datanya tidak tersedia saat ini.
+
+Gaya jawaban: ringkas, langsung ke poin, gunakan format Rupiah untuk nilai uang, dan sebutkan angka konkret dari data yang tersedia. Jawab dalam bahasa yang sama dengan pertanyaan pengguna (default Bahasa Indonesia).
+
+`
+
+// buildRAGContext gathers a compact, current snapshot of the organization's
+// BIA data (services, active incidents, financial profiles, knowledge base)
+// to ground the chatbot's answers in real numbers instead of letting the
+// model guess.
+func (a *app) buildRAGContext(ctx context.Context, org string) (string, error) {
+	var b strings.Builder
+
+	b.WriteString("=== Business Services ===\n")
+	rows, err := a.pool.Query(ctx, `select name, criticality, coalesce(business_value_per_hour,0), coalesce(sla_target_pct,99.9), coalesce(affected_users,0) from business_services where organization_id=$1 order by criticality, name limit 8`, org)
+	if err != nil {
+		return "", err
+	}
+	svcCount := 0
+	for rows.Next() {
+		var name, crit string
+		var bvph, sla float64
+		var users int
+		if err := rows.Scan(&name, &crit, &bvph, &sla, &users); err != nil {
+			rows.Close()
+			return "", err
+		}
+		fmt.Fprintf(&b, "- %s (Prioritas %s, SLA target %.2f%%, %d pengguna terdampak, nilai bisnis Rp%.0f/jam)\n", name, crit, sla, users, bvph)
+		svcCount++
+	}
+	rows.Close()
+	if svcCount == 0 {
+		b.WriteString("(belum ada business service terdaftar)\n")
+	}
+
+	var totalOpenIncidents int
+	if err := a.pool.QueryRow(ctx, `select count(*) from incidents where organization_id=$1 and status in ('OPEN','ACKNOWLEDGED')`, org).Scan(&totalOpenIncidents); err != nil {
+		return "", err
+	}
+	fmt.Fprintf(&b, "\n=== Insiden Aktif (OPEN/ACKNOWLEDGED) — total %d, 5 teratas ditampilkan ===\n", totalOpenIncidents)
+	rows2, err := a.pool.Query(ctx, `
+		select coalesce(bs.name,'Unmapped'), s.device_name, s.sensor_name, i.severity, i.status,
+			coalesce(i.duration_seconds, extract(epoch from (now()-i.started_at))::int),
+			coalesce(ic.total_impact,0)
+		from incidents i
+		join prtg_sensors s on s.id=i.prtg_sensor_id
+		left join lateral (
+			select b2.name from business_services b2
+			join service_sensor_mapping m on m.business_service_id=b2.id
+			where m.organization_id=$1 and m.prtg_sensor_id=i.prtg_sensor_id
+			order by m.dependency_weight desc limit 1
+		) bs on true
+		left join lateral (
+			select c.total_impact from impact_calculations c
+			where c.organization_id=$1 and c.incident_id=i.id
+			order by c.calculated_at desc limit 1
+		) ic on true
+		where i.organization_id=$1 and i.status in ('OPEN','ACKNOWLEDGED')
+		order by (i.severity='CRITICAL') desc, i.started_at desc limit 5`, org)
+	if err != nil {
+		return "", err
+	}
+	incCount := 0
+	for rows2.Next() {
+		var svc, dev, sensor, sev, status string
+		var dur int
+		var impact float64
+		if err := rows2.Scan(&svc, &dev, &sensor, &sev, &status, &dur, &impact); err != nil {
+			rows2.Close()
+			return "", err
+		}
+		fmt.Fprintf(&b, "- [%s] %s — sensor %s @ %s, status %s, berlangsung %dm, estimasi dampak Rp%.0f\n", sev, svc, sensor, dev, status, dur/60, impact)
+		incCount++
+	}
+	rows2.Close()
+	if incCount == 0 {
+		b.WriteString("(tidak ada insiden aktif saat ini — semua layanan normal)\n")
+	}
+
+	b.WriteString("\n=== Financial Profiles Aktif ===\n")
+	rows3, err := a.pool.Query(ctx, `select coalesce(b2.name,'Organization Default'), f.hourly_revenue, f.service_dependency, f.loss_probability from financial_profiles f left join business_services b2 on b2.id=f.business_service_id where f.organization_id=$1 and f.valid_to is null limit 8`, org)
+	if err != nil {
+		return "", err
+	}
+	finCount := 0
+	for rows3.Next() {
+		var name string
+		var hr, dep, lp float64
+		if err := rows3.Scan(&name, &hr, &dep, &lp); err != nil {
+			rows3.Close()
+			return "", err
+		}
+		fmt.Fprintf(&b, "- %s: revenue Rp%.0f/jam, dependency %.2f, loss probability %.0f%%\n", name, hr, dep, lp*100)
+		finCount++
+	}
+	rows3.Close()
+	if finCount == 0 {
+		b.WriteString("(belum ada financial profile aktif)\n")
+	}
+
+	b.WriteString("\n=== Knowledge Base (Prioritas Tinggi Dulu, ringkas) ===\n")
+	rows4, err := a.pool.Query(ctx, `select device_pattern, service_category, priority, hourly_loss_estimate, left(description, 70) from knowledge_base where organization_id=$1 and is_active=true order by priority limit 5`, org)
+	if err != nil {
+		return "", err
+	}
+	kbCount := 0
+	for rows4.Next() {
+		var dp, cat, pr, desc string
+		var loss float64
+		if err := rows4.Scan(&dp, &cat, &pr, &loss, &desc); err != nil {
+			rows4.Close()
+			return "", err
+		}
+		fmt.Fprintf(&b, "- [%s/%s] %s: Rp%.0f/jam — %s\n", pr, cat, dp, loss, desc)
+		kbCount++
+	}
+	rows4.Close()
+	if kbCount == 0 {
+		b.WriteString("(belum ada knowledge base entry)\n")
+	}
+
+	return b.String(), nil
+}
+
+func (a *app) aiChat(w http.ResponseWriter, r *http.Request) {
+	org := orgID(r)
+	var in struct {
+		Message string            `json:"message"`
+		History []aiagent.Message `json:"history"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		jsonOut(w, 400, map[string]any{"error": "invalid JSON"})
+		return
+	}
+	if strings.TrimSpace(in.Message) == "" {
+		jsonOut(w, 400, map[string]any{"error": "message is required"})
+		return
+	}
+
+	client := aiagent.NewClient()
+	if !client.Configured() {
+		jsonOut(w, 503, map[string]any{"error": "AI agent belum dikonfigurasi di server (AI_AGENT_BASE_URL/AI_AGENT_API_KEY)"})
+		return
+	}
+
+	ragContext, err := a.buildRAGContext(r.Context(), org)
+	if err != nil {
+		jsonOut(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+
+	messages := []aiagent.Message{{Role: "system", Content: aiChatSystemPreamble + ragContext}}
+	// Cap conversation history so the prompt stays bounded.
+	if len(in.History) > 12 {
+		in.History = in.History[len(in.History)-12:]
+	}
+	messages = append(messages, in.History...)
+	messages = append(messages, aiagent.Message{Role: "user", Content: in.Message})
+
+	reply, err := client.Chat(r.Context(), messages)
+	if err != nil {
+		jsonOut(w, 502, map[string]any{"error": err.Error()})
+		return
+	}
+	jsonOut(w, 200, map[string]any{"reply": reply})
+}
+
 // ─── BIA: Executive Summary ───────────────────────────────────────────────────
 
 func (a *app) biaExecutiveSummary(w http.ResponseWriter, r *http.Request) {
@@ -1556,6 +1750,95 @@ func (a *app) biaIncidentPriority(w http.ResponseWriter, r *http.Request) {
 			"score_criticality": critScore, "score_user_impact": userScore,
 			"score_financial": finScore, "score_urgency": urgScore,
 			"priority_score": totalScore, "recovery_priority": priority,
+		})
+	}
+	jsonOut(w, 200, map[string]any{"items": out})
+}
+
+// ─── BIA: Incident Correlation (root-cause / temporal clustering) ────────────
+
+// biaIncidentCorrelation returns incidents grouped by correlation_group_id
+// (incidents that started within incident.CorrelationWindow of each other -
+// see services/worker) for groups with more than one member, i.e. likely
+// "incident storms" sharing a root cause.
+func (a *app) biaIncidentCorrelation(w http.ResponseWriter, r *http.Request) {
+	org := orgID(r)
+	groupRows, err := a.pool.Query(r.Context(), `
+		select i.correlation_group_id, count(*), min(i.started_at), max(i.started_at),
+			sum(coalesce(ic.total_impact,0)),
+			count(*) filter (where i.status in ('OPEN','ACKNOWLEDGED'))
+		from incidents i
+		left join lateral (
+			select c.total_impact from impact_calculations c
+			where c.organization_id=$1 and c.incident_id=i.id
+			order by c.calculated_at desc limit 1
+		) ic on true
+		where i.organization_id=$1 and i.correlation_group_id is not null
+		group by i.correlation_group_id
+		having count(*) > 1
+		order by min(i.started_at) desc
+		limit 20`, org)
+	if err != nil {
+		jsonOut(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	type group struct {
+		ID                        uuid.UUID
+		Count, OpenCount          int
+		FirstStarted, LastStarted time.Time
+		TotalImpact               float64
+	}
+	var groups []group
+	for groupRows.Next() {
+		var g group
+		if err := groupRows.Scan(&g.ID, &g.Count, &g.FirstStarted, &g.LastStarted, &g.TotalImpact, &g.OpenCount); err != nil {
+			groupRows.Close()
+			jsonOut(w, 500, map[string]any{"error": err.Error()})
+			return
+		}
+		groups = append(groups, g)
+	}
+	groupRows.Close()
+
+	out := []map[string]any{}
+	for _, g := range groups {
+		memberRows, err := a.pool.Query(r.Context(), `
+			select i.id, i.severity, i.status, s.device_name, s.sensor_name, coalesce(bs.name,'Unmapped')
+			from incidents i
+			join prtg_sensors s on s.id=i.prtg_sensor_id
+			left join lateral (
+				select b.name from business_services b
+				join service_sensor_mapping m on m.business_service_id=b.id
+				where m.organization_id=$1 and m.prtg_sensor_id=i.prtg_sensor_id
+				order by m.dependency_weight desc limit 1
+			) bs on true
+			where i.organization_id=$1 and i.correlation_group_id=$2
+			order by i.started_at`, org, g.ID)
+		if err != nil {
+			jsonOut(w, 500, map[string]any{"error": err.Error()})
+			return
+		}
+		members := []map[string]any{}
+		for memberRows.Next() {
+			var id uuid.UUID
+			var sev, status, dev, sensor, svc string
+			if err := memberRows.Scan(&id, &sev, &status, &dev, &sensor, &svc); err != nil {
+				memberRows.Close()
+				jsonOut(w, 500, map[string]any{"error": err.Error()})
+				return
+			}
+			members = append(members, map[string]any{"incident_id": id, "severity": sev, "status": status, "device": dev, "sensor": sensor, "service_name": svc})
+		}
+		memberRows.Close()
+		out = append(out, map[string]any{
+			"correlation_group_id": g.ID,
+			"incident_count":       g.Count,
+			"open_incident_count":  g.OpenCount,
+			"first_started_at":     g.FirstStarted,
+			"last_started_at":      g.LastStarted,
+			"window_seconds":       int(g.LastStarted.Sub(g.FirstStarted).Seconds()),
+			"total_impact":         g.TotalImpact,
+			"incidents":            members,
 		})
 	}
 	jsonOut(w, 200, map[string]any{"items": out})

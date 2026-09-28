@@ -1,13 +1,15 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import AIAnalysis from './AIAnalysis';
+import AIChatbot from './AIChatbot';
 import BIADashboard from './BIADashboard';
 import KnowledgeBase from './KnowledgeBase';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type Summary = { open_incidents: number; critical_incidents: number; total_impact: number; events_24h: number };
-type Incident = { id: string; status: string; severity: string; started_at: string; ended_at: string | null; duration_seconds: number; sensor: { device: string; name: string }; service: { name: string; criticality: string }; total_impact: number; model_version: string };
-type Detail = Incident & { impact: any };
+type Incident = { id: string; status: string; severity: string; started_at: string; ended_at: string | null; duration_seconds: number; sensor: { device: string; name: string }; service: { name: string; criticality: string }; total_impact: number; model_version: string; correlation_group_id: string | null; correlated_incident_count: number };
+type CorrelatedSibling = { id: string; severity: string; status: string; sensor: { device: string; name: string }; service: string };
+type Detail = Incident & { impact: any; correlated_incidents: CorrelatedSibling[] };
 type Service = { id: string; name: string; criticality: string };
 type Sensor = { id: string; prtg_sensor_id: string; device_name: string; sensor_name: string; last_known_state: string };
 type Mapping = { sensor_id: string; prtg_sensor_id: string; device_name: string; sensor_name: string; last_known_state: string; dependency_weight: number };
@@ -77,7 +79,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 15000);
+    const t = setInterval(refresh, 300000);
     return () => clearInterval(t);
   }, [refresh]);
 
@@ -197,6 +199,25 @@ export default function Dashboard() {
                 <span className="detail-duration">{fmtDuration(selected.duration_seconds)}</span>
               </div>
 
+              {selected.correlated_incidents && selected.correlated_incidents.length > 0 && (
+                <div className="insight-panel" style={{ marginBottom: 16 }}>
+                  <h3>🔗 Kemungkinan Satu Root Cause</h3>
+                  <p style={{ marginBottom: 10 }}>
+                    Insiden ini dimulai dalam rentang waktu berdekatan dengan {selected.correlated_incidents.length} insiden lain — kemungkinan besar disebabkan oleh masalah infrastruktur yang sama (misal 1 switch/router yang mati mempengaruhi banyak sensor sekaligus).
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {selected.correlated_incidents.map(c => (
+                      <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '6px 10px', background: 'var(--bg-raised)', borderRadius: 'var(--radius-xs)' }}>
+                        <span className={`pill ${c.severity.toLowerCase()}`} style={{ fontSize: 10 }}>{c.severity}</span>
+                        <strong>{c.service || 'Unmapped'}</strong>
+                        <span style={{ color: 'var(--text-muted)' }}>· {c.sensor?.name} @ {c.sensor?.device}</span>
+                        <span className={`pill ${c.status.toLowerCase()}`} style={{ marginLeft: 'auto', fontSize: 10 }}>{c.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {selected.impact ? (
                 <>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Estimated Financial Loss</div>
@@ -235,6 +256,8 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      <AIChatbot />
     </div>
   );
 }
@@ -605,7 +628,14 @@ function OverviewTab({ summary, incidents, events, loading, onRefresh, onSelect,
                   </td></tr>
                 ) : incidents.map(inc => (
                   <tr key={inc.id} onClick={() => onSelect(inc.id)} id={`incident-row-${inc.id}`}>
-                    <td><span className={`pill ${inc.severity.toLowerCase()}`}>{inc.severity}</span></td>
+                    <td>
+                      <span className={`pill ${inc.severity.toLowerCase()}`}>{inc.severity}</span>
+                      {inc.correlated_incident_count > 1 && (
+                        <span className="pill" title="Kemungkinan satu root cause dengan insiden lain" style={{ marginLeft: 6, background: 'var(--blue-bg)', color: 'var(--blue-text)', border: '1px solid var(--blue-border)' }}>
+                          🔗 {inc.correlated_incident_count - 1} lainnya
+                        </span>
+                      )}
+                    </td>
                     <td>
                       <strong>{inc.service?.name || 'Unmapped'}</strong>
                       <small>{inc.service?.criticality || '—'}</small>
@@ -653,7 +683,7 @@ function OverviewTab({ summary, incidents, events, loading, onRefresh, onSelect,
         <p>
           Financial impact dikalkulasi berdasarkan financial profile yang aktif saat insiden terjadi dan model dampak yang dipublikasi.
           Perubahan profil membuat versi baru dan mempertahankan asumsi historis agar perhitungan insiden tetap auditable.
-          Sensor PRTG dipolling setiap 60 detik; webhook tersedia di <code style={{ fontFamily: 'JetBrains Mono', fontSize: 11, background: 'rgba(255,255,255,0.08)', padding: '1px 6px', borderRadius: 4 }}>/internal/prtg/events</code>.
+          Sensor PRTG dipolling setiap 10 menit; webhook tersedia di <code style={{ fontFamily: 'JetBrains Mono', fontSize: 11, background: 'rgba(255,255,255,0.08)', padding: '1px 6px', borderRadius: 4 }}>/internal/prtg/events</code>.
         </p>
       </div>
     </>

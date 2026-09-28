@@ -37,6 +37,12 @@ type ImpactMatrix = {
   id: string; technical_condition: string; operational_impact: string; business_impact: string;
   affected_services: string[]; severity: string; sort_order: number; is_active: boolean;
 };
+type CorrelationMember = { incident_id: string; severity: string; status: string; device: string; sensor: string; service_name: string };
+type CorrelationGroup = {
+  correlation_group_id: string; incident_count: number; open_incident_count: number;
+  first_started_at: string; last_started_at: string; window_seconds: number;
+  total_impact: number; incidents: CorrelationMember[];
+};
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 const ORG = process.env.NEXT_PUBLIC_ORGANIZATION_ID || '11111111-1111-1111-1111-111111111111';
@@ -104,10 +110,11 @@ function severityBadge(s: string) {
 
 // ─── Main BIA Dashboard ────────────────────────────────────────────────────────
 export default function BIADashboard() {
-  const [activeSection, setActiveSection] = useState<'exec' | 'service' | 'matrix' | 'priority' | 'financial' | 'sla'>('exec');
+  const [activeSection, setActiveSection] = useState<'exec' | 'service' | 'matrix' | 'priority' | 'correlation' | 'financial' | 'sla'>('exec');
   const [execSummary, setExecSummary] = useState<ExecSummary | null>(null);
   const [serviceImpact, setServiceImpact] = useState<ServiceImpact[]>([]);
   const [incidentPriority, setIncidentPriority] = useState<IncidentPriority[]>([]);
+  const [correlationGroups, setCorrelationGroups] = useState<CorrelationGroup[]>([]);
   const [slaData, setSlaData] = useState<SLARow[]>([]);
   const [financialData, setFinancialData] = useState<FinancialRow[]>([]);
   const [impactMatrix, setImpactMatrix] = useState<ImpactMatrix[]>([]);
@@ -117,10 +124,11 @@ export default function BIADashboard() {
 
   const refresh = useCallback(async () => {
     try {
-      const [exec, svc, prio, sla, fin, matrix] = await Promise.all([
+      const [exec, svc, prio, corr, sla, fin, matrix] = await Promise.all([
         apiFetch<ExecSummary>('/api/v1/bia/executive-summary'),
         apiFetch<{ items: ServiceImpact[] }>('/api/v1/bia/service-impact'),
         apiFetch<{ items: IncidentPriority[] }>('/api/v1/bia/incident-priority'),
+        apiFetch<{ items: CorrelationGroup[] }>('/api/v1/bia/incident-correlation'),
         apiFetch<{ items: SLARow[] }>('/api/v1/bia/sla-analysis'),
         apiFetch<{ items: FinancialRow[] }>('/api/v1/bia/financial-impact'),
         apiFetch<{ items: ImpactMatrix[] }>('/api/v1/impact-matrix'),
@@ -128,6 +136,7 @@ export default function BIADashboard() {
       setExecSummary(exec);
       setServiceImpact(svc.items);
       setIncidentPriority(prio.items);
+      setCorrelationGroups(corr.items);
       setSlaData(sla.items);
       setFinancialData(fin.items);
       setImpactMatrix(matrix.items);
@@ -147,6 +156,7 @@ export default function BIADashboard() {
     { id: 'service', label: '🏢 Service Impact' },
     { id: 'matrix', label: '📋 Impact Matrix' },
     { id: 'priority', label: '🎯 Incident Priority' },
+    { id: 'correlation', label: '🔗 Incident Correlation' },
     { id: 'financial', label: '💰 Financial Impact' },
     { id: 'sla', label: '📈 SLA & Downtime' },
   ] as const;
@@ -204,6 +214,7 @@ export default function BIADashboard() {
             {activeSection === 'service' && <ServiceImpactSection data={serviceImpact} />}
             {activeSection === 'matrix' && <ImpactMatrixSection data={impactMatrix} onRefresh={refresh} />}
             {activeSection === 'priority' && <IncidentPrioritySection data={incidentPriority} />}
+            {activeSection === 'correlation' && <CorrelationSection data={correlationGroups} />}
             {activeSection === 'financial' && <FinancialSection data={financialData} />}
             {activeSection === 'sla' && <SLASection data={slaData} />}
           </>
@@ -642,6 +653,67 @@ function IncidentPrioritySection({ data }: { data: IncidentPriority[] }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ─── Section: Incident Correlation (root-cause / temporal clustering) ──────────
+function CorrelationSection({ data }: { data: CorrelationGroup[] }) {
+  return (
+    <div>
+      <h2 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 700, color: 'var(--text-primary)' }}>
+        Incident Correlation — Kemungkinan Root Cause Bersama
+      </h2>
+      <p style={{ margin: '0 0 20px', fontSize: 12, color: 'var(--text-muted)', maxWidth: 720 }}>
+        Insiden yang mulai dalam rentang waktu berdekatan (≤3 menit) dikelompokkan di sini — biasanya tanda satu masalah infrastruktur (misal 1 switch/router mati) yang berdampak ke banyak sensor sekaligus. Ini korelasi berbasis waktu, bukan peta topologi jaringan asli — tetap verifikasi manual untuk root cause pastinya.
+      </p>
+
+      {data.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>
+          <div style={{ fontSize: 36, marginBottom: 12 }}>✅</div>
+          <p>Belum ada cluster insiden terdeteksi — semua insiden yang pernah terjadi berdiri sendiri (tidak ada yang dimulai berdekatan waktu).</p>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {data.map((g, i) => (
+            <div key={g.correlation_group_id} style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12, padding: 20, boxShadow: 'var(--shadow-sm)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 20 }}>🔗</span>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>
+                      Cluster #{i + 1} — {g.incident_count} insiden{g.open_incident_count > 0 ? `, ${g.open_incident_count} masih aktif` : ''}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      Dimulai dalam rentang {g.window_seconds}s ({new Date(g.first_started_at).toLocaleString('id-ID')} → {new Date(g.last_started_at).toLocaleTimeString('id-ID')})
+                    </div>
+                  </div>
+                </div>
+                {g.total_impact > 0 && (
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>TOTAL DAMPAK CLUSTER</div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--red-text)' }}>{money.format(g.total_impact)}</div>
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {g.incidents.map(m => (
+                  <div key={m.incident_id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '7px 10px', background: 'var(--bg-raised)', borderRadius: 8, flexWrap: 'wrap' }}>
+                    {severityBadge(m.severity)}
+                    <strong style={{ color: 'var(--text-primary)' }}>{m.service_name}</strong>
+                    <span style={{ color: 'var(--text-muted)' }}>· {m.sensor} @ {m.device}</span>
+                    <span style={{
+                      marginLeft: 'auto', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
+                      background: m.status === 'OPEN' ? 'var(--red-bg)' : m.status === 'ACKNOWLEDGED' ? 'var(--yellow-bg)' : 'var(--green-bg)',
+                      color: m.status === 'OPEN' ? 'var(--red-text)' : m.status === 'ACKNOWLEDGED' ? 'var(--yellow-text)' : 'var(--green-text)',
+                    }}>{m.status}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

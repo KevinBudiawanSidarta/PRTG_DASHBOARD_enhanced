@@ -64,3 +64,21 @@ func Duration(start, end time.Time) int64 {
 	}
 	return int64(end.Sub(start).Seconds())
 }
+
+// CorrelationWindow is how close together two incidents must start to be
+// treated as a likely shared-root-cause cluster (e.g. one upstream device
+// failing takes multiple dependent sensors down within the same window).
+// This is a temporal heuristic only - the platform has no real network
+// topology graph, so proximity in time is the signal used instead of a
+// true dependency chain.
+const CorrelationWindow = 3 * time.Minute
+
+// Correlates reports whether two incidents starting at a and b are close
+// enough in time to likely share a root cause.
+func Correlates(a, b time.Time) bool {
+	d := a.Sub(b)
+	if d < 0 {
+		d = -d
+	}
+	return d <= CorrelationWindow
+}
