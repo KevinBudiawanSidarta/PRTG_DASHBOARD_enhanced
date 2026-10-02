@@ -49,12 +49,12 @@ const EMPTY_FORM = {
 };
 
 const CATEGORIES = [
-  { value: 'network', label: '🌐 Network', color: '#3b82f6' },
-  { value: 'server', label: '🖥️ Server', color: '#8b5cf6' },
-  { value: 'application', label: '📱 Application', color: '#06b6d4' },
-  { value: 'database', label: '🗄️ Database', color: '#f59e0b' },
-  { value: 'storage', label: '💾 Storage', color: '#22c55e' },
-  { value: 'security', label: '🔒 Security', color: '#ef4444' },
+  { value: 'network', label: 'Network' },
+  { value: 'server', label: 'Server' },
+  { value: 'application', label: 'Application' },
+  { value: 'database', label: 'Database' },
+  { value: 'storage', label: 'Storage' },
+  { value: 'security', label: 'Security' },
 ];
 
 export default function KnowledgeBase() {
@@ -216,7 +216,6 @@ export default function KnowledgeBase() {
         <div className="kpi-card" id="kpi-kb-total">
           <div className="kpi-header">
             <span className="kpi-label">Total Entries</span>
-            <span className="kpi-icon">📚</span>
           </div>
           <div className="kpi-value">{entries.length}</div>
           <div className="kpi-meta">{activeCount} aktif</div>
@@ -224,7 +223,6 @@ export default function KnowledgeBase() {
         <div className="kpi-card" id="kpi-kb-loss">
           <div className="kpi-header">
             <span className="kpi-label">Max Exposure/Jam</span>
-            <span className="kpi-icon">💸</span>
           </div>
           <div className="kpi-value" style={{ fontSize: totalLoss > 999999999 ? 20 : 28 }}>
             {money.format(totalLoss)}
@@ -234,7 +232,6 @@ export default function KnowledgeBase() {
         <div className="kpi-card" id="kpi-kb-categories">
           <div className="kpi-header">
             <span className="kpi-label">Categories</span>
-            <span className="kpi-icon">📂</span>
           </div>
           <div className="kpi-value">{byCategory.filter(c => c.count > 0).length}</div>
           <div className="kpi-meta">Dari {CATEGORIES.length} kategori</div>
@@ -242,7 +239,6 @@ export default function KnowledgeBase() {
         <div className="kpi-card" id="kpi-kb-p1">
           <div className="kpi-header">
             <span className="kpi-label">Critical (P1)</span>
-            <span className="kpi-icon">🚨</span>
           </div>
           <div className="kpi-value">{entries.filter(e => e.priority === 'P1').length}</div>
           <div className="kpi-meta">Prioritas tertinggi</div>
@@ -256,7 +252,6 @@ export default function KnowledgeBase() {
             key={c.value}
             className={`kb-cat-chip ${filterCategory === c.value ? 'active' : ''}`}
             onClick={() => setFilterCategory(filterCategory === c.value ? 'all' : c.value)}
-            style={{ '--cat-color': c.color } as React.CSSProperties}
           >
             <span>{c.label}</span>
             <span className="kb-cat-count">{c.count}</span>
@@ -271,7 +266,7 @@ export default function KnowledgeBase() {
             <input
               type="text"
               className="form-input"
-              placeholder="🔍 Cari device, sensor, atau deskripsi..."
+              placeholder="Cari device, sensor, atau deskripsi..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               style={{ maxWidth: 320 }}
@@ -310,10 +305,10 @@ export default function KnowledgeBase() {
         <div className="panel kb-form-panel" id="kb-form-panel" style={{ marginBottom: 16 }}>
           <div className="panel-header">
             <div>
-              <div className="panel-title">{editing ? '📝 Edit Knowledge Base Entry' : '+ New Knowledge Base Entry'}</div>
+              <div className="panel-title">{editing ? 'Edit Knowledge Base Entry' : '+ New Knowledge Base Entry'}</div>
               <div className="panel-sub">{editing ? `Editing: ${editing.device_pattern}` : 'Definisikan aturan dampak bisnis baru'}</div>
             </div>
-            <button className="btn sm" onClick={() => { setShowForm(false); setEditing(null); }}>✕ Cancel</button>
+            <button className="btn sm" onClick={() => { setShowForm(false); setEditing(null); }}>Cancel</button>
           </div>
           <div className="profile-form">
             <div className="form-grid three" style={{ marginBottom: 14 }}>
@@ -443,10 +438,10 @@ export default function KnowledgeBase() {
 
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="btn primary" onClick={save} id="save-kb-btn">
-                {editing ? '✓ Update Entry' : '+ Create Entry'}
+                {editing ? 'Update Entry' : '+ Create Entry'}
               </button>
               <button className="btn" onClick={() => { setShowForm(false); setEditing(null); }}>
-                ✕ Cancel
+                Cancel
               </button>
             </div>
           </div>
@@ -470,7 +465,6 @@ export default function KnowledgeBase() {
           </div>
         ) : filtered.length === 0 ? (
           <div className="empty-state" style={{ padding: 64 }}>
-            <div className="empty-icon">📚</div>
             <p>
               {entries.length === 0
                 ? 'Belum ada knowledge base entry. Klik "+ New Entry" untuk mulai.'
@@ -486,15 +480,12 @@ export default function KnowledgeBase() {
                 <div className={`kb-entry-row ${!entry.is_active ? 'inactive' : ''}`} key={entry.id} id={`kb-entry-${entry.id}`}>
                   <div className="kb-entry-main" onClick={() => setExpandedEntry(isExpanded ? null : entry.id)}>
                     <div className="kb-entry-left">
-                      <div className="kb-entry-cat-icon" style={{ background: cat?.color || '#666' }}>
-                        {cat?.label.split(' ')[0] || '📦'}
-                      </div>
                       <div>
                         <div className="kb-entry-device">{entry.device_pattern}</div>
                         <div className="kb-entry-desc">{entry.description}</div>
-                        {entry.sensor_pattern && (
-                          <div className="kb-entry-sensor">Sensor: {entry.sensor_pattern}</div>
-                        )}
+                        <div className="kb-entry-sensor">
+                          {cat?.label || entry.service_category}{entry.sensor_pattern && ` · Sensor: ${entry.sensor_pattern}`}
+                        </div>
                       </div>
                     </div>
                     <div className="kb-entry-right">
@@ -546,8 +537,8 @@ export default function KnowledgeBase() {
                         </div>
                       )}
                       <div className="kb-entry-actions">
-                        <button className="btn sm" onClick={() => startEdit(entry)} id={`edit-kb-${entry.id}`}>✎ Edit</button>
-                        <button className="btn sm danger" onClick={() => remove(entry.id)} id={`delete-kb-${entry.id}`}>🗑 Delete</button>
+                        <button className="btn sm" onClick={() => startEdit(entry)} id={`edit-kb-${entry.id}`}>Edit</button>
+                        <button className="btn sm danger" onClick={() => remove(entry.id)} id={`delete-kb-${entry.id}`}>Delete</button>
                       </div>
                     </div>
                   )}

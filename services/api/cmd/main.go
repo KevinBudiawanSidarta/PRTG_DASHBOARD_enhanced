@@ -68,6 +68,8 @@ func main() {
 	mux.Handle("GET /api/v1/bia/incident-correlation", auth.WithOrg(http.HandlerFunc(a.biaIncidentCorrelation)))
 	mux.Handle("GET /api/v1/bia/sla-analysis", auth.WithOrg(http.HandlerFunc(a.biaSLAAnalysis)))
 	mux.Handle("GET /api/v1/bia/financial-impact", auth.WithOrg(http.HandlerFunc(a.biaFinancialImpact)))
+	mux.Handle("GET /api/v1/business-processes", auth.WithOrg(http.HandlerFunc(a.listBusinessProcesses)))
+	mux.Handle("PUT /api/v1/business-processes/{id}", auth.WithOrg(http.HandlerFunc(a.updateBusinessProcess)))
 	mux.Handle("GET /api/v1/impact-matrix", auth.WithOrg(http.HandlerFunc(a.listImpactMatrix)))
 	mux.Handle("POST /api/v1/impact-matrix", auth.WithOrg(http.HandlerFunc(a.createImpactMatrix)))
 	mux.Handle("PUT /api/v1/impact-matrix/", auth.WithOrg(http.HandlerFunc(a.updateImpactMatrix)))
@@ -1347,6 +1349,36 @@ func (a *app) buildRAGContext(ctx context.Context, org string) (string, error) {
 	rows2.Close()
 	if incCount == 0 {
 		b.WriteString("(tidak ada insiden aktif saat ini — semua layanan normal)\n")
+	}
+
+	b.WriteString("\n=== Business Process (sensor Business Process PRTG) ===\n")
+	rowsBP, err := a.pool.Query(ctx, `
+		select bp.name, bp.state, coalesce(bs.name,'belum terhubung'), coalesce(bp.prtg_uptime_pct,0)::float8,
+			coalesce((select string_agg(c.name||' '||c.state, ', ') from business_process_channels c
+				where c.business_process_id=bp.id and c.prtg_channel_id<>0 and c.state<>'up'),'')
+		from business_process_sensors bp left join business_services bs on bs.id=bp.business_service_id
+		where bp.organization_id=$1 and bp.removed_at is null order by bp.name limit 8`, org)
+	if err != nil {
+		return "", err
+	}
+	bpCount := 0
+	for rowsBP.Next() {
+		var name, state, svc, bad string
+		var uptime float64
+		if err := rowsBP.Scan(&name, &state, &svc, &uptime, &bad); err != nil {
+			rowsBP.Close()
+			return "", err
+		}
+		fmt.Fprintf(&b, "- %s: status %s, service %s, uptime PRTG %.2f%%", name, state, svc, uptime)
+		if bad != "" {
+			fmt.Fprintf(&b, ", komponen bermasalah: %s", bad)
+		}
+		b.WriteString("\n")
+		bpCount++
+	}
+	rowsBP.Close()
+	if bpCount == 0 {
+		b.WriteString("(belum ada sensor Business Process dari PRTG)\n")
 	}
 
 	b.WriteString("\n=== Financial Profiles Aktif ===\n")

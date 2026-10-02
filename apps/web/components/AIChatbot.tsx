@@ -63,7 +63,7 @@ export default function AIChatbot() {
       setMessages(m => [...m, { role: 'assistant', content: data.reply }]);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Gagal menghubungi AI agent';
-      setMessages(m => [...m, { role: 'assistant', content: `⚠️ ${msg}`, error: true }]);
+      setMessages(m => [...m, { role: 'assistant', content: `${msg}`, error: true }]);
     } finally {
       setLoading(false);
     }
@@ -86,16 +86,12 @@ export default function AIChatbot() {
           aria-label="Buka AI Business Analyst"
           style={{
             position: 'fixed', right: 24, bottom: 24, zIndex: 1000,
-            width: 60, height: 60, borderRadius: '50%', border: 'none', cursor: 'pointer',
-            background: 'linear-gradient(135deg, var(--accent-from), var(--accent-to))',
-            boxShadow: '0 8px 24px -4px var(--accent-glow), var(--shadow-lg)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 26, color: '#fff', transition: 'transform .15s ease',
+            height: 40, padding: '0 18px', borderRadius: 99, border: 'none', cursor: 'pointer',
+            background: 'var(--accent)', color: '#fff',
+            fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
           }}
-          onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.08)')}
-          onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
         >
-          <span style={{ animation: 'ai-chat-pulse 2.4s ease-in-out infinite' }}>✨</span>
+          Tanya AI
         </button>
       )}
 
@@ -109,31 +105,21 @@ export default function AIChatbot() {
             background: 'var(--bg-surface)', borderRadius: 'var(--radius)',
             boxShadow: 'var(--shadow-lg)', border: '1px solid var(--border)',
             display: 'flex', flexDirection: 'column', overflow: 'hidden',
-            animation: 'ai-chat-in .2s ease',
           }}
         >
           {/* Header */}
           <div style={{
-            padding: '16px 18px', background: 'linear-gradient(135deg, var(--accent-from), var(--accent-to))',
+            padding: '14px 16px', borderBottom: '1px solid var(--border)',
             display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0,
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{
-                width: 34, height: 34, borderRadius: '50%', background: 'rgba(255,255,255,.2)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17,
-              }}>✨</div>
-              <div>
-                <div style={{ color: '#fff', fontWeight: 700, fontSize: 14, lineHeight: 1.2 }}>AI Business Analyst</div>
-                <div style={{ color: 'rgba(255,255,255,.8)', fontSize: 11, display: 'flex', alignItems: 'center', gap: 5 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4ade80', display: 'inline-block' }} />
-                  Business Impact Analysis
-                </div>
-              </div>
+            <div>
+              <div style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: 14, lineHeight: 1.2 }}>AI Business Analyst</div>
+              <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2 }}>Business Impact Analysis</div>
             </div>
             <button
               onClick={() => setOpen(false)}
               aria-label="Tutup chat"
-              style={{ background: 'rgba(255,255,255,.15)', border: 'none', borderRadius: 8, width: 28, height: 28, color: '#fff', cursor: 'pointer', fontSize: 15, lineHeight: 1 }}
+              style={{ background: 'transparent', border: 'none', borderRadius: 'var(--radius-xs)', width: 28, height: 28, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 15, lineHeight: 1 }}
             >✕</button>
           </div>
 
@@ -141,11 +127,8 @@ export default function AIChatbot() {
           <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
             {messages.length === 0 && (
               <div>
-                <div style={{
-                  background: 'var(--bg-raised)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
-                  padding: '12px 14px', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 14,
-                }}>
-                  👋 Halo! Saya bisa bantu jawab pertanyaan seputar kondisi bisnis, insiden aktif, dan dampak finansial di dashboard ini — berdasarkan data terkini.
+                <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 14 }}>
+                  Halo! Saya bisa bantu jawab pertanyaan seputar kondisi bisnis, insiden aktif, dan dampak finansial di dashboard ini — berdasarkan data terkini.
                 </div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: .5, marginBottom: 8 }}>
                   Coba tanyakan:
@@ -163,7 +146,7 @@ export default function AIChatbot() {
                       onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-raised)')}
                       onMouseLeave={e => (e.currentTarget.style.background = 'var(--bg-card)')}
                     >
-                      💬 {s}
+                      {s}
                     </button>
                   ))}
                 </div>
@@ -176,7 +159,7 @@ export default function AIChatbot() {
                   maxWidth: '85%', padding: '10px 13px', borderRadius: 'var(--radius-sm)', fontSize: 13, lineHeight: 1.5,
                   whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                   background: m.role === 'user'
-                    ? 'linear-gradient(135deg, var(--accent-from), var(--accent-to))'
+                    ? 'var(--accent)'
                     : m.error ? 'var(--red-bg)' : 'var(--bg-raised)',
                   color: m.role === 'user' ? '#fff' : m.error ? 'var(--red-text)' : 'var(--text-primary)',
                   border: m.role === 'assistant' && !m.error ? '1px solid var(--border)' : 'none',
@@ -223,20 +206,18 @@ export default function AIChatbot() {
               disabled={loading || !input.trim()}
               aria-label="Kirim pesan"
               style={{
-                width: 38, height: 38, borderRadius: 'var(--radius-sm)', border: 'none', flexShrink: 0,
-                background: loading || !input.trim() ? 'var(--bg-raised)' : 'linear-gradient(135deg, var(--accent-from), var(--accent-to))',
+                height: 38, padding: '0 14px', borderRadius: 'var(--radius-sm)', border: 'none', flexShrink: 0,
+                background: loading || !input.trim() ? 'var(--bg-raised)' : 'var(--accent)',
                 color: loading || !input.trim() ? 'var(--text-muted)' : '#fff',
                 cursor: loading || !input.trim() ? 'not-allowed' : 'pointer',
-                fontSize: 15, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
               }}
-            >➤</button>
+            >Kirim</button>
           </div>
         </div>
       )}
 
       <style>{`
-        @keyframes ai-chat-in { from { opacity: 0; transform: translateY(12px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
-        @keyframes ai-chat-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
         @keyframes ai-chat-dot { 0%, 60%, 100% { opacity: .3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
       `}</style>
     </>

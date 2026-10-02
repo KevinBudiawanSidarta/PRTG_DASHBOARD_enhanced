@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import AIAnalysis from './AIAnalysis';
 import AIChatbot from './AIChatbot';
 import BIADashboard from './BIADashboard';
+import BusinessProcess from './BusinessProcess';
 import KnowledgeBase from './KnowledgeBase';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -16,7 +17,7 @@ type Mapping = { sensor_id: string; prtg_sensor_id: string; device_name: string;
 type Profile = { id: string; business_service_id: string | null; service_name: string; hourly_revenue: number; transactions_per_hour: number; avg_transaction_value: number; service_dependency: number; loss_probability: number; operational_cost_per_hour: number; penalty_fixed: number; recovery_fixed: number; valid_from: string; valid_to: string | null; active: boolean };
 type TechEvent = { id: string; state: string; device: string; sensor: string; occurred_at: string };
 
-type Tab = 'monitoring' | 'ai' | 'kb' | 'overview' | 'impact' | 'mapping' | 'financial' | 'bia';
+type Tab = 'monitoring' | 'ai' | 'kb' | 'overview' | 'impact' | 'mapping' | 'financial' | 'bia' | 'process';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
@@ -55,6 +56,18 @@ export default function Dashboard() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // Remember the sidebar state per browser; storage can be unavailable (private mode, iframe).
+  useEffect(() => {
+    try { setSidebarCollapsed(localStorage.getItem('sidebar-collapsed') === '1'); } catch { /* ignore */ }
+  }, []);
+  function toggleSidebar() {
+    setSidebarCollapsed(c => {
+      try { localStorage.setItem('sidebar-collapsed', c ? '0' : '1'); } catch { /* ignore */ }
+      return !c;
+    });
+  }
 
   const refresh = useCallback(async () => {
     try {
@@ -88,15 +101,16 @@ export default function Dashboard() {
   const sensorDown   = useMemo(() => sensors.filter(s => s.last_known_state === 'down').length, [sensors]);
   const sensorUp     = useMemo(() => sensors.filter(s => s.last_known_state === 'up').length, [sensors]);
 
-  const navItems: { id: Tab; icon: string; label: string; badge?: number }[] = [
-    { id: 'monitoring', icon: '📡', label: 'Live Monitoring', badge: sensorDown || undefined },
-    { id: 'ai',         icon: '🤖', label: 'AI Impact Analysis', badge: sensorDown || undefined },
-    { id: 'kb',         icon: '📚', label: 'Knowledge Base (CRUD)' },
-    { id: 'overview',   icon: '📊', label: 'Executive Overview', badge: openIncidents.length || undefined },
-    { id: 'bia',        icon: '🎯', label: 'Business Impact Analysis', badge: openIncidents.length || undefined },
-    { id: 'impact',     icon: '💸', label: 'Business Impact' },
-    { id: 'mapping',    icon: '🔗', label: 'Service Mapping' },
-    { id: 'financial',  icon: '💰', label: 'Financial Profiles' },
+  const navItems: { id: Tab; label: string; badge?: number }[] = [
+    { id: 'monitoring', label: 'Live Monitoring', badge: sensorDown || undefined },
+    { id: 'ai',         label: 'Financial Impact Analysis', badge: sensorDown || undefined },
+    { id: 'kb',         label: 'Knowledge Base (CRUD)' },
+    { id: 'overview',   label: 'Executive Overview', badge: openIncidents.length || undefined },
+    { id: 'bia',        label: 'Business Impact Analysis', badge: openIncidents.length || undefined },
+    { id: 'process',    label: 'Business Process Impact' },
+    { id: 'impact',     label: 'Business Impact' },
+    { id: 'mapping',    label: 'Service Mapping' },
+    { id: 'financial',  label: 'Financial Profiles' },
   ];
 
   async function handleIncidentAction(id: string, action: 'ack' | 'close') {
@@ -108,16 +122,20 @@ export default function Dashboard() {
   return (
     <div className="app-shell">
       {/* ── Sidebar ── */}
-      <aside className="sidebar">
-        <div className="sidebar-brand">
-          <div className="brand-icon">⚡</div>
-          <div className="brand-text">
-            <span className="brand-name">BIA Platform</span>
-            <span className="brand-sub">IT Intelligence</span>
-          </div>
+      <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
+        <div className="sidebar-top">
+          <div className="sidebar-label">Navigation</div>
+          <button
+            className="sidebar-toggle"
+            onClick={toggleSidebar}
+            id="sidebar-toggle-btn"
+            title={sidebarCollapsed ? 'Buka sidebar' : 'Tutup sidebar'}
+            aria-label={sidebarCollapsed ? 'Buka sidebar' : 'Tutup sidebar'}
+            aria-expanded={!sidebarCollapsed}
+          >
+            {sidebarCollapsed ? '»' : '«'}
+          </button>
         </div>
-
-        <div className="sidebar-label">Navigation</div>
         <nav className="sidebar-nav">
           {navItems.map(n => (
             <button
@@ -126,7 +144,6 @@ export default function Dashboard() {
               onClick={() => setTab(n.id)}
               id={`nav-${n.id}`}
             >
-              <span className="nav-icon">{n.icon}</span>
               {n.label}
               {!!n.badge && <span className="nav-badge">{n.badge}</span>}
             </button>
@@ -136,7 +153,7 @@ export default function Dashboard() {
         <div className="sidebar-footer">
           <div className="live-badge">
             <span className="pulse-dot" />
-            Live · 15s refresh
+            Live · 5 minutes refresh
           </div>
           <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 8, padding: '0 4px' }}>
             Last: {lastRefresh ? lastRefresh.toLocaleTimeString() : 'Loading...'}
@@ -148,7 +165,7 @@ export default function Dashboard() {
       <main className="main-content">
         {error && (
           <div className="alert-banner" id="api-error-banner">
-            ⚠️ API connection issue: {error}
+            API connection issue: {error}
           </div>
         )}
 
@@ -175,6 +192,7 @@ export default function Dashboard() {
         {tab === 'mapping' && <MappingTab />}
         {tab === 'financial' && <FinancialTab />}
         {tab === 'bia' && <BIADashboard />}
+        {tab === 'process' && <BusinessProcess />}
       </main>
 
       {/* ── Incident Drawer ── */}
@@ -186,7 +204,7 @@ export default function Dashboard() {
                 <div className="drawer-eyebrow">Incident Detail</div>
                 <div className="drawer-title">{selected.service?.name || 'Unmapped Service'}</div>
               </div>
-              <button className="btn sm" onClick={() => setSelected(null)} id="drawer-close-btn">✕ Close</button>
+              <button className="btn sm" onClick={() => setSelected(null)} id="drawer-close-btn">Close</button>
             </div>
 
             <div className="drawer-body">
@@ -201,7 +219,7 @@ export default function Dashboard() {
 
               {selected.correlated_incidents && selected.correlated_incidents.length > 0 && (
                 <div className="insight-panel" style={{ marginBottom: 16 }}>
-                  <h3>🔗 Kemungkinan Satu Root Cause</h3>
+                  <h3>Kemungkinan Satu Root Cause</h3>
                   <p style={{ marginBottom: 10 }}>
                     Insiden ini dimulai dalam rentang waktu berdekatan dengan {selected.correlated_incidents.length} insiden lain — kemungkinan besar disebabkan oleh masalah infrastruktur yang sama (misal 1 switch/router yang mati mempengaruhi banyak sensor sekaligus).
                   </p>
@@ -235,7 +253,6 @@ export default function Dashboard() {
                 </>
               ) : (
                 <div className="empty-state">
-                  <div className="empty-icon">⏳</div>
                   <p>Financial calculation pending.<br />Available after incident is RESOLVED.</p>
                 </div>
               )}
@@ -244,12 +261,12 @@ export default function Dashboard() {
             <div className="drawer-actions">
               {selected.status === 'OPEN' && (
                 <button className="btn" id={`ack-btn-${selected.id}`} onClick={() => handleIncidentAction(selected.id, 'ack')}>
-                  ✓ Acknowledge
+                  Acknowledge
                 </button>
               )}
               {selected.status === 'ACKNOWLEDGED' && (
                 <button className="btn success" id={`close-btn-${selected.id}`} onClick={() => handleIncidentAction(selected.id, 'close')}>
-                  ✔ Close Incident
+                  Close Incident
                 </button>
               )}
             </div>
@@ -332,21 +349,21 @@ function MonitoringTab({ sensors, events, loading, onRefresh }: {
       <div className="page-header">
         <div className="page-eyebrow">Live Monitoring</div>
         <h1 className="page-title">PRTG Sensor Status</h1>
-        <p className="page-sub">Real-time status dari semua sensor yang terhubung ke PRTG. Auto-refresh setiap 15 detik.</p>
+        <p className="page-sub">Real-time status dari semua sensor yang terhubung ke PRTG. Auto-refresh setiap 5 Menit.</p>
       </div>
 
       <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4,1fr)', marginBottom: 20 }}>
         <div onClick={() => setFilterState('all')} style={{ cursor: 'pointer' }} title="Klik untuk tampilkan semua sensor">
-          <KpiCard label="Total Sensors"  value={sensors.length} icon="📡" meta={filterState === 'all' ? '● Aktif difilter' : 'Klik untuk filter'} />
+          <KpiCard label="Total Sensors"  value={sensors.length} meta={filterState === 'all' ? 'Aktif difilter' : 'Klik untuk filter'} />
         </div>
         <div onClick={() => setFilterState('up')} style={{ cursor: 'pointer' }} title="Klik untuk filter: Sensor Aktif (UP)">
-          <KpiCard label="Operational (UP)" value={up} icon="✅" meta={filterState === 'up' ? '● Aktif difilter' : 'Klik untuk filter'} cls="success" />
+          <KpiCard label="Operational (UP)" value={up} meta={filterState === 'up' ? 'Aktif difilter' : 'Klik untuk filter'} cls="success" />
         </div>
         <div onClick={() => setFilterState('down')} style={{ cursor: 'pointer' }} title="Klik untuk filter: Sensor DOWN">
-          <KpiCard label="Down" value={down} icon="🔴" meta={filterState === 'down' ? '● Aktif difilter' : 'Perlu perhatian'} cls={down > 0 ? 'danger' : ''} />
+          <KpiCard label="Down" value={down} meta={filterState === 'down' ? 'Aktif difilter' : 'Perlu perhatian'} cls={down > 0 ? 'danger' : ''} />
         </div>
         <div onClick={() => setFilterState('unknown')} style={{ cursor: 'pointer' }} title="Klik untuk filter: Sensor UNKNOWN">
-          <KpiCard label="Unknown" value={unknown} icon="⚪" meta={filterState === 'unknown' ? '● Aktif difilter' : 'Klik untuk filter'} />
+          <KpiCard label="Unknown" value={unknown} meta={filterState === 'unknown' ? 'Aktif difilter' : 'Klik untuk filter'} />
         </div>
       </div>
 
@@ -361,7 +378,7 @@ function MonitoringTab({ sensors, events, loading, onRefresh }: {
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button className="btn sm" onClick={onRefresh} id="refresh-sensors-btn">
-                {loading ? '⟳ Loading…' : '⟳ Refresh'}
+                {loading ? 'Loading…' : 'Refresh'}
               </button>
             </div>
           </div>
@@ -374,7 +391,7 @@ function MonitoringTab({ sensors, events, loading, onRefresh }: {
                 onClick={() => setFilterState('all')}
                 id="filter-all-chip"
               >
-                <span>🌐 Semua</span>
+                <span>Semua</span>
                 <span className="filter-chip-count">{sensors.length}</span>
               </button>
               <button
@@ -382,7 +399,7 @@ function MonitoringTab({ sensors, events, loading, onRefresh }: {
                 onClick={() => setFilterState('up')}
                 id="filter-up-chip"
               >
-                <span>✅ Aktif (UP)</span>
+                <span>Aktif (UP)</span>
                 <span className="filter-chip-count">{up}</span>
               </button>
               <button
@@ -390,7 +407,7 @@ function MonitoringTab({ sensors, events, loading, onRefresh }: {
                 onClick={() => setFilterState('down')}
                 id="filter-down-chip"
               >
-                <span>🔴 Down</span>
+                <span>Down</span>
                 <span className="filter-chip-count">{down}</span>
               </button>
               <button
@@ -398,7 +415,7 @@ function MonitoringTab({ sensors, events, loading, onRefresh }: {
                 onClick={() => setFilterState('unknown')}
                 id="filter-unknown-chip"
               >
-                <span>⚪ Unknown</span>
+                <span>Unknown</span>
                 <span className="filter-chip-count">{unknown}</span>
               </button>
               {warning > 0 && (
@@ -407,7 +424,7 @@ function MonitoringTab({ sensors, events, loading, onRefresh }: {
                   onClick={() => setFilterState('warning')}
                   id="filter-warning-chip"
                 >
-                  <span>⚠️ Warning</span>
+                  <span>Warning</span>
                   <span className="filter-chip-count">{warning}</span>
                 </button>
               )}
@@ -417,7 +434,7 @@ function MonitoringTab({ sensors, events, loading, onRefresh }: {
               <input
                 type="text"
                 className="form-input"
-                placeholder="🔍 Cari device / sensor..."
+                placeholder="Cari device / sensor..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 style={{ width: 220, padding: '6px 10px', fontSize: 12 }}
@@ -444,7 +461,6 @@ function MonitoringTab({ sensors, events, loading, onRefresh }: {
             </div>
           ) : filteredSensors.length === 0 ? (
             <div className="empty-state" style={{ padding: 48 }}>
-              <div className="empty-icon">🔍</div>
               <p>Tidak ada sensor yang cocok dengan filter {filterState !== 'all' ? `"${filterState.toUpperCase()}"` : ''} {searchQuery ? `atau pencarian "${searchQuery}"` : ''}.</p>
               <button className="btn sm" onClick={() => { setFilterState('all'); setSearchQuery(''); }} style={{ marginTop: 8 }}>
                 Reset Filter
@@ -533,7 +549,6 @@ function MonitoringTab({ sensors, events, loading, onRefresh }: {
           <div className="event-feed">
             {events.length === 0 ? (
               <div className="empty-state" style={{ padding: 32 }}>
-                <div className="empty-icon">📋</div>
                 <p>Belum ada event</p>
               </div>
             ) : events.map(e => (
@@ -589,10 +604,10 @@ function OverviewTab({ summary, incidents, events, loading, onRefresh, onSelect,
       </div>
 
       <div className="kpi-grid">
-        <KpiCard label="Open Incidents"  value={summary.open_incidents}   icon="🚨" meta="Active & acknowledged" cls={summary.open_incidents > 0 ? 'danger' : ''} />
-        <KpiCard label="Critical"        value={summary.critical_incidents} icon="🔴" meta="Requires exec attention" cls={summary.critical_incidents > 0 ? 'danger' : ''} />
-        <KpiCard label="30-Day Impact"   value={money.format(summary.total_impact)} icon="💸" meta="Resolved incidents only" />
-        <KpiCard label="Events · 24h"    value={summary.events_24h} icon="📈" meta="Raw PRTG telemetry" />
+        <KpiCard label="Open Incidents"  value={summary.open_incidents}   meta="Active & acknowledged" cls={summary.open_incidents > 0 ? 'danger' : ''} />
+        <KpiCard label="Critical"        value={summary.critical_incidents} meta="Requires exec attention" cls={summary.critical_incidents > 0 ? 'danger' : ''} />
+        <KpiCard label="30-Day Impact"   value={money.format(summary.total_impact)} meta="Resolved incidents only" />
+        <KpiCard label="Events · 24h"    value={summary.events_24h} meta="Raw PRTG telemetry" />
       </div>
 
       <div className="content-grid">
@@ -603,7 +618,7 @@ function OverviewTab({ summary, incidents, events, loading, onRefresh, onSelect,
               <div className="panel-sub">Klik baris untuk melihat detail & kalkulasi dampak</div>
             </div>
             <button className="btn sm" onClick={onRefresh} id="refresh-incidents-btn">
-              {loading ? '⟳ Loading…' : '⟳ Refresh'}
+              {loading ? 'Loading…' : 'Refresh'}
             </button>
           </div>
           <div className="table-wrap">
@@ -622,7 +637,6 @@ function OverviewTab({ summary, incidents, events, loading, onRefresh, onSelect,
                 {incidents.length === 0 ? (
                   <tr><td colSpan={6}>
                     <div className="empty-state" style={{ padding: 32 }}>
-                      <div className="empty-icon">✅</div>
                       <p>Tidak ada insiden aktif</p>
                     </div>
                   </td></tr>
@@ -631,8 +645,8 @@ function OverviewTab({ summary, incidents, events, loading, onRefresh, onSelect,
                     <td>
                       <span className={`pill ${inc.severity.toLowerCase()}`}>{inc.severity}</span>
                       {inc.correlated_incident_count > 1 && (
-                        <span className="pill" title="Kemungkinan satu root cause dengan insiden lain" style={{ marginLeft: 6, background: 'var(--blue-bg)', color: 'var(--blue-text)', border: '1px solid var(--blue-border)' }}>
-                          🔗 {inc.correlated_incident_count - 1} lainnya
+                        <span className="pill" title="Kemungkinan satu root cause dengan insiden lain" style={{ marginLeft: 6, background: 'var(--blue-bg)', color: 'var(--blue-text)' }}>
+                          {inc.correlated_incident_count - 1} lainnya
                         </span>
                       )}
                     </td>
@@ -679,11 +693,11 @@ function OverviewTab({ summary, incidents, events, loading, onRefresh, onSelect,
       </div>
 
       <div className="insight-panel">
-        <h3>📌 Cara Baca Dashboard</h3>
+        <h3>Cara Baca Dashboard</h3>
         <p>
           Financial impact dikalkulasi berdasarkan financial profile yang aktif saat insiden terjadi dan model dampak yang dipublikasi.
           Perubahan profil membuat versi baru dan mempertahankan asumsi historis agar perhitungan insiden tetap auditable.
-          Sensor PRTG dipolling setiap 10 menit; webhook tersedia di <code style={{ fontFamily: 'JetBrains Mono', fontSize: 11, background: 'rgba(255,255,255,0.08)', padding: '1px 6px', borderRadius: 4 }}>/internal/prtg/events</code>.
+          Sensor PRTG dipolling setiap 10 menit; webhook tersedia di <code style={{ fontFamily: 'JetBrains Mono', fontSize: 11, background: 'var(--bg-raised)', padding: '1px 6px', borderRadius: 4 }}>/internal/prtg/events</code>.
         </p>
       </div>
     </>
@@ -706,9 +720,9 @@ function ImpactTab({ incidents, onSelect }: { incidents: Incident[]; onSelect: (
       </div>
 
       <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(3,1fr)' }}>
-        <KpiCard label="Total Impact (Resolved)" value={money.format(totalImpact)} icon="💸" meta="Kalkulasi final" cls="danger" />
-        <KpiCard label="Resolved Incidents"      value={resolved.length}           icon="✅" meta="Sudah ditutup" cls="success" />
-        <KpiCard label="Open Incidents"          value={open.length}               icon="🚨" meta="Dampak masih berjalan" cls={open.length > 0 ? 'danger' : ''} />
+        <KpiCard label="Total Impact (Resolved)" value={money.format(totalImpact)} meta="Kalkulasi final" cls="danger" />
+        <KpiCard label="Resolved Incidents"      value={resolved.length}           meta="Sudah ditutup" cls="success" />
+        <KpiCard label="Open Incidents"          value={open.length}               meta="Dampak masih berjalan" cls={open.length > 0 ? 'danger' : ''} />
       </div>
 
       {resolved.length > 0 && (
@@ -771,7 +785,7 @@ function ImpactTab({ incidents, onSelect }: { incidents: Incident[]; onSelect: (
         <div className="panel" id="open-impact-panel">
           <div className="panel-header">
             <div>
-              <div className="panel-title">🔴 Active Incidents — Impact Accumulating</div>
+              <div className="panel-title">Active Incidents — Impact Accumulating</div>
               <div className="panel-sub">Kerugian terus bertambah selama insiden berlangsung</div>
             </div>
           </div>
@@ -801,7 +815,6 @@ function ImpactTab({ incidents, onSelect }: { incidents: Incident[]; onSelect: (
       {resolved.length === 0 && open.length === 0 && (
         <div className="panel">
           <div className="empty-state" style={{ padding: 64 }}>
-            <div className="empty-icon">📊</div>
             <p>Belum ada data insiden untuk dianalisis.<br />Data akan muncul setelah insiden RESOLVED pertama terjadi.</p>
           </div>
         </div>
@@ -917,16 +930,16 @@ function MappingTab() {
             </div>
 
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button className="btn primary" onClick={saveService} id="save-service-btn">{editing ? '✓ Update' : '+ Create'}</button>
+              <button className="btn primary" onClick={saveService} id="save-service-btn">{editing ? 'Update' : '+ Create'}</button>
               {selected && !editing && (
                 <button className="btn" id="edit-service-btn" onClick={() => {
                   const svc = services.find(x => x.id === selected);
                   if (svc) { setEditing(svc); setName(svc.name); setCriticality(svc.criticality); }
-                }}>✎ Edit</button>
+                }}>Edit</button>
               )}
-              {editing && <button className="btn" onClick={resetForm}>✕ Cancel</button>}
+              {editing && <button className="btn" onClick={resetForm}>Cancel</button>}
               {selected && (
-                <button className="btn danger" id="delete-service-btn" onClick={() => removeService(selected)}>🗑 Delete</button>
+                <button className="btn danger" id="delete-service-btn" onClick={() => removeService(selected)}>Delete</button>
               )}
             </div>
 
@@ -971,12 +984,11 @@ function MappingTab() {
                 </div>
 
                 <button className="btn primary" style={{ marginTop: 16 }} onClick={saveMappings} id="save-mappings-btn">
-                  💾 Save Mapping
+                  Save Mapping
                 </button>
               </>
             ) : (
               <div className="empty-state" style={{ padding: 32 }}>
-                <div className="empty-icon">🔗</div>
                 <p>Pilih atau buat service untuk mengelola mapping sensor.</p>
               </div>
             )}
@@ -1089,7 +1101,6 @@ function FinancialTab() {
               {profiles.length === 0 ? (
                 <tr><td colSpan={7}>
                   <div className="empty-state" style={{ padding: 32 }}>
-                    <div className="empty-icon">💰</div>
                     <p>Belum ada financial profile. Buat satu untuk mulai menghitung dampak finansial.</p>
                   </div>
                 </td></tr>
@@ -1111,7 +1122,7 @@ function FinancialTab() {
                   <td style={{ textAlign: 'right' }}>
                     {p.active && (
                       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                        <button className="btn sm" onClick={() => startEdit(p)} id={`edit-profile-${p.id}`}>✎ Edit</button>
+                        <button className="btn sm" onClick={() => startEdit(p)} id={`edit-profile-${p.id}`}>Edit</button>
                         <button className="btn sm danger" onClick={() => remove(p.id)} id={`deactivate-profile-${p.id}`}>Deactivate</button>
                       </div>
                     )}
@@ -1127,7 +1138,7 @@ function FinancialTab() {
       <div className="panel">
         <div className="panel-header">
           <div>
-            <div className="panel-title">{editing ? '📝 Create Replacement Version' : '+ New Financial Profile'}</div>
+            <div className="panel-title">{editing ? 'Create Replacement Version' : '+ New Financial Profile'}</div>
             <div className="panel-sub">{editing ? `Replacing active profile for ${editing.service_name}` : 'Tambah profil keuangan baru'}</div>
           </div>
         </div>
@@ -1163,8 +1174,8 @@ function FinancialTab() {
           </div>
 
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn primary" onClick={save} id="save-profile-btn">💾 Save Profile</button>
-            <button className="btn" onClick={() => { setEditing(null); setMsg(''); }} id="clear-profile-btn">✕ Clear</button>
+            <button className="btn primary" onClick={save} id="save-profile-btn">Save Profile</button>
+            <button className="btn" onClick={() => { setEditing(null); setMsg(''); }} id="clear-profile-btn">Clear</button>
           </div>
           {msg && <div className={`toast ${msgType === 'error' ? 'error' : ''}`}>{msgType === 'success' ? '✓' : '✕'} {msg}</div>}
           <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 12 }}>
@@ -1177,14 +1188,13 @@ function FinancialTab() {
 }
 
 // ─── Shared: KPI Card ─────────────────────────────────────────────────────────
-function KpiCard({ label, value, icon, meta, cls = '' }: {
-  label: string; value: string | number; icon: string; meta: string; cls?: string;
+function KpiCard({ label, value, meta, cls = '' }: {
+  label: string; value: string | number; meta: string; cls?: string;
 }) {
   return (
     <div className={`kpi-card ${cls}`} id={`kpi-${label.toLowerCase().replace(/\s+/g, '-')}`}>
       <div className="kpi-header">
         <span className="kpi-label">{label}</span>
-        <span className="kpi-icon">{icon}</span>
       </div>
       <div className="kpi-value">{value}</div>
       <div className="kpi-meta">{meta}</div>

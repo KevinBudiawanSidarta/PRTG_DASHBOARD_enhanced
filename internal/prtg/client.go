@@ -3,7 +3,9 @@ package prtg
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,7 +20,11 @@ type Sensor struct {
 	Sensor    string `json:"sensor"`
 	Status    string `json:"status"`
 	LastCheck any    `json:"lastcheck"`
+	Type      string `json:"type_raw,omitempty"`
 }
+
+// TypeBusinessProcess is PRTG's raw sensor type for Business Process sensors.
+const TypeBusinessProcess = "businessprocess"
 
 func (s *Sensor) UnmarshalJSON(data []byte) error {
 	type Alias Sensor
@@ -80,19 +86,16 @@ func firstEnv(keys ...string) string {
 	return ""
 }
 
-func (c *Client) Sensors(ctx context.Context) ([]Sensor, error) {
+// get performs an authenticated GET against PRTG and returns the body.
+// timeout overrides the client's default when > 0 (historic data can be large).
+func (c *Client) get(ctx context.Context, path string, q url.Values, timeout time.Duration) ([]byte, error) {
 	if c.BaseURL == "" {
 		return nil, fmt.Errorf("PRTG_SERVER/PRTG_BASE_URL is required")
 	}
-	u, err := url.Parse(c.BaseURL + "/api/table.json")
+	u, err := url.Parse(c.BaseURL + path)
 	if err != nil {
 		return nil, err
 	}
-	q := u.Query()
-	q.Set("content", "sensors")
-	q.Set("output", "json")
-	q.Set("count", "*")
-	q.Set("columns", "objid,device,sensor,status,lastcheck")
 	if c.Username != "" {
 		q.Set("username", c.Username)
 	}
@@ -102,22 +105,48 @@ func (c *Client) Sensors(ctx context.Context) ([]Sensor, error) {
 		q.Set("password", c.Password)
 	}
 	u.RawQuery = q.Encode()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.HTTP.Do(req)
+	httpClient := c.HTTP
+	if timeout > 0 {
+		hc := *c.HTTP
+		hc.Timeout = timeout
+		httpClient = &hc
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
+		// Never surface the request URL: it carries the PRTG credentials.
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			return nil, fmt.Errorf("PRTG %s: %w", path, uerr.Err)
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("PRTG status %s", resp.Status)
+		return nil, fmt.Errorf("PRTG %s status %s", path, resp.Status)
 	}
-	var raw json.RawMessage
-	if err = json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	return io.ReadAll(resp.Body)
+}
+
+func (c *Client) Sensors(ctx context.Context) ([]Sensor, error) {
+	q := url.Values{}
+	q.Set("content", "sensors")
+	q.Set("output", "json")
+	q.Set("count", "*")
+	q.Set("columns", "objid,device,sensor,status,lastcheck,type")
+	body, err := c.get(ctx, "/api/table.json", q, 0)
+	if err != nil {
 		return nil, err
 	}
+	raw := json.RawMessage(body)
 	var table tableResponse
 	if err = json.Unmarshal(raw, &table); err == nil {
 		if len(table.Sensors) > 0 {

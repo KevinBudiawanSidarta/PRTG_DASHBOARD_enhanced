@@ -113,7 +113,7 @@ export default function AIAnalysis() {
 
       {error && (
         <div className="alert-banner" id="ai-error-banner">
-          ⚠️ {error}
+          {error}
         </div>
       )}
 
@@ -123,7 +123,6 @@ export default function AIAnalysis() {
           <div className={`kpi-card ${analysisData.summary.total_devices_affected > 0 ? 'danger' : 'success'}`} id="kpi-ai-devices">
             <div className="kpi-header">
               <span className="kpi-label">Devices Terdampak</span>
-              <span className="kpi-icon">🔴</span>
             </div>
             <div className="kpi-value">{analysisData.summary.total_devices_affected}</div>
             <div className="kpi-meta">Sensor sedang DOWN</div>
@@ -131,7 +130,6 @@ export default function AIAnalysis() {
           <div className={`kpi-card ${analysisData.summary.total_hourly_impact > 0 ? 'danger' : ''}`} id="kpi-ai-impact">
             <div className="kpi-header">
               <span className="kpi-label">Kerugian / Jam</span>
-              <span className="kpi-icon">💸</span>
             </div>
             <div className="kpi-value" style={{ fontSize: analysisData.summary.total_hourly_impact > 999999999 ? 22 : 28 }}>
               {money.format(analysisData.summary.total_hourly_impact)}
@@ -141,7 +139,6 @@ export default function AIAnalysis() {
           <div className="kpi-card" id="kpi-ai-scenario">
             <div className="kpi-header">
               <span className="kpi-label">Proyeksi {hours}h</span>
-              <span className="kpi-icon">📊</span>
             </div>
             <div className="kpi-value" style={{ fontSize: 22 }}>
               {money.format(analysisData.summary.total_hourly_impact * hours)}
@@ -151,7 +148,6 @@ export default function AIAnalysis() {
           <div className="kpi-card" id="kpi-ai-rules">
             <div className="kpi-header">
               <span className="kpi-label">Knowledge Base</span>
-              <span className="kpi-icon">📚</span>
             </div>
             <div className="kpi-value">{analysisData.summary.total_kb_rules}</div>
             <div className="kpi-meta">Rules aktif</div>
@@ -193,7 +189,7 @@ export default function AIAnalysis() {
                 disabled={loading}
                 id="run-analysis-btn"
               >
-                {loading ? '⟳ Analyzing…' : '🤖 Analyze'}
+                {loading ? 'Analyzing…' : 'Analyze'}
               </button>
             </div>
           </div>
@@ -203,13 +199,12 @@ export default function AIAnalysis() {
       {/* Down Sensors Alert */}
       {downSensors.length > 0 && (
         <div className="ai-alert-strip" id="ai-down-alert">
-          <div className="ai-alert-icon">⚠️</div>
           <div className="ai-alert-body">
             <strong>{downSensors.length} sensor sedang DOWN</strong>
             <span>{downSensors.map(s => s.device_name).join(', ')}</span>
           </div>
           <button className="btn sm danger" onClick={() => runAutoAnalysis()} disabled={autoAnalyzing}>
-            {autoAnalyzing ? '⟳ ...' : '🔄 Re-analyze'}
+            {autoAnalyzing ? '...' : 'Re-analyze'}
           </button>
         </div>
       )}
@@ -229,7 +224,6 @@ export default function AIAnalysis() {
       {analysisData && analysisData.analysis.length === 0 && !loading && (
         <div className="panel">
           <div className="empty-state" style={{ padding: 64 }}>
-            <div className="empty-icon">✅</div>
             <p>Semua sensor UP — tidak ada dampak bisnis yang terdeteksi.</p>
             <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
               Pilih sensor spesifik dari dropdown untuk simulasi "what-if".
@@ -293,7 +287,7 @@ export default function AIAnalysis() {
                     {/* Recommendations */}
                     {result.recommendations.length > 0 && (
                       <div className="ai-section">
-                        <div className="ai-section-title">🤖 AI Recommendations</div>
+                        <div className="ai-section-title">AI Recommendations</div>
                         <div className="ai-rec-list">
                           {result.recommendations.map((rec, i) => (
                             <div className="ai-rec-item" key={i}>
@@ -308,7 +302,7 @@ export default function AIAnalysis() {
                     {/* Matched Rules */}
                     {result.matched_rules.length > 0 && (
                       <div className="ai-section">
-                        <div className="ai-section-title">📚 Matched Knowledge Base Rules ({result.matched_rules.length})</div>
+                        <div className="ai-section-title">Matched Knowledge Base Rules ({result.matched_rules.length})</div>
                         {result.matched_rules.map((rule, i) => (
                           <div className="ai-rule-card" key={rule.kb_id || i}>
                             <div className="ai-rule-header">
@@ -319,9 +313,9 @@ export default function AIAnalysis() {
                             </div>
                             <p className="ai-rule-desc">{rule.description}</p>
                             <div className="ai-rule-metrics">
-                              <span>💰 {money.format(rule.hourly_loss)}/jam</span>
-                              <span>⚖️ SLA: {money.format(rule.sla_penalty)}/jam</span>
-                              <span>⏱️ Recovery: {rule.recovery_minutes}m</span>
+                              <span>Kerugian: {money.format(rule.hourly_loss)}/jam</span>
+                              <span>SLA: {money.format(rule.sla_penalty)}/jam</span>
+                              <span>Recovery: {rule.recovery_minutes}m</span>
                             </div>
                             {rule.affected_processes && rule.affected_processes.length > 0 && (
                               <div className="ai-rule-processes">
@@ -333,7 +327,7 @@ export default function AIAnalysis() {
                             )}
                             {rule.recovery_procedure && (
                               <div className="ai-recovery-box">
-                                <div className="ai-recovery-title">📋 Recovery Procedure</div>
+                                <div className="ai-recovery-title">Recovery Procedure</div>
                                 <pre className="ai-recovery-text">{rule.recovery_procedure}</pre>
                               </div>
                             )}
@@ -345,7 +339,6 @@ export default function AIAnalysis() {
                     {result.matched_rules.length === 0 && (
                       <div className="ai-section">
                         <div className="ai-no-rules">
-                          <span className="ai-no-rules-icon">📝</span>
                           <p>Belum ada Knowledge Base entry untuk device ini.</p>
                           <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                             Tambahkan di tab Knowledge Base untuk mendapatkan analisis dampak yang akurat.
@@ -356,7 +349,7 @@ export default function AIAnalysis() {
 
                     {/* Impact Scenario Table */}
                     <div className="ai-section">
-                      <div className="ai-section-title">📊 Simulasi Skenario Waktu</div>
+                      <div className="ai-section-title">Simulasi Skenario Waktu</div>
                       <div className="table-wrap">
                         <table id={`scenario-table-${result.sensor.id}`}>
                           <thead>
@@ -388,7 +381,7 @@ export default function AIAnalysis() {
                   className="ai-card-toggle"
                   onClick={() => setExpandedCard(isExpanded ? null : result.sensor.id)}
                 >
-                  {isExpanded ? '▲ Collapse' : '▼ Show Details & Recovery'}
+                  {isExpanded ? 'Collapse' : 'Show Details & Recovery'}
                 </button>
               </div>
             );
@@ -398,7 +391,7 @@ export default function AIAnalysis() {
 
       {/* Info Panel */}
       <div className="insight-panel" style={{ marginTop: 20 }}>
-        <h3>🤖 Cara Kerja AI Analysis</h3>
+        <h3>Cara Kerja AI Analysis</h3>
         <p>
           AI engine mencocokkan sensor yang DOWN dengan aturan di <strong>Knowledge Base</strong>.
           Setiap entry KB mendefinisikan device pattern, estimasi kerugian per jam, SLA penalty,
