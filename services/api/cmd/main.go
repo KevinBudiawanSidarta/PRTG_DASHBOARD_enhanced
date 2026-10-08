@@ -1886,7 +1886,7 @@ func (a *app) biaSLAAnalysis(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.pool.Query(r.Context(), `
 		SELECT
-			bs.name, coalesce(bs.sla_target_pct,99.9), coalesce(bs.rto_minutes,60), coalesce(bs.rpo_minutes,30),
+			bs.id, bs.name, coalesce(bs.sla_target_pct,99.9), coalesce(bs.rto_minutes,60), coalesce(bs.rpo_minutes,30),
 			coalesce(sum(coalesce(i.duration_seconds,extract(epoch from (now()-i.started_at))::int)) FILTER (WHERE i.id IS NOT NULL AND i.started_at>=$2),0)::float/60.0 as downtime_min,
 			coalesce(avg(coalesce(i.duration_seconds,0)) FILTER (WHERE i.ended_at IS NOT NULL AND i.started_at>=$2),0)::float/60.0 as avg_mttr_min,
 			count(i.id) FILTER (WHERE i.started_at>=$2) as incident_count_month
@@ -1903,11 +1903,12 @@ func (a *app) biaSLAAnalysis(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
+		var id uuid.UUID
 		var name string
 		var slaTarget, rto, rpo float64
 		var downtimeMin, mttrMin float64
 		var incidentCount int
-		if err := rows.Scan(&name, &slaTarget, &rto, &rpo, &downtimeMin, &mttrMin, &incidentCount); err != nil {
+		if err := rows.Scan(&id, &name, &slaTarget, &rto, &rpo, &downtimeMin, &mttrMin, &incidentCount); err != nil {
 			jsonOut(w, 500, map[string]any{"error": err.Error()})
 			return
 		}
@@ -1932,6 +1933,7 @@ func (a *app) biaSLAAnalysis(w http.ResponseWriter, r *http.Request) {
 			mtbfHours = (monthMinutes - downtimeMin) / float64(incidentCount) / 60.0
 		}
 		out = append(out, map[string]any{
+			"service_id":              id,
 			"service_name":            name,
 			"sla_target_pct":          slaTarget,
 			"availability_actual_pct": availPct,
@@ -1958,7 +1960,7 @@ func (a *app) biaFinancialImpact(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.pool.Query(r.Context(), `
 		SELECT
-			bs.name, bs.criticality, coalesce(bs.business_value_per_hour,0),
+			bs.id, bs.name, bs.criticality, coalesce(bs.business_value_per_hour,0),
 			coalesce(fp.hourly_revenue,0), coalesce(fp.service_dependency,1), coalesce(fp.loss_probability,1),
 			coalesce(fp.operational_cost_per_hour,0), coalesce(fp.penalty_config->>'fixed','0')::numeric,
 			coalesce(fp.affected_employees,0), coalesce(fp.avg_employee_cost_per_hour,0),
@@ -1977,11 +1979,12 @@ func (a *app) biaFinancialImpact(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
+		var id uuid.UUID
 		var name, crit string
 		var bvph, hrRev, svcDep, lossPb, opCost, penalty, empCostPh float64
 		var employees int
 		var downtimeMin float64
-		if err := rows.Scan(&name, &crit, &bvph, &hrRev, &svcDep, &lossPb, &opCost, &penalty, &employees, &empCostPh, &downtimeMin); err != nil {
+		if err := rows.Scan(&id, &name, &crit, &bvph, &hrRev, &svcDep, &lossPb, &opCost, &penalty, &employees, &empCostPh, &downtimeMin); err != nil {
 			jsonOut(w, 500, map[string]any{"error": err.Error()})
 			return
 		}
@@ -1997,6 +2000,7 @@ func (a *app) biaFinancialImpact(w http.ResponseWriter, r *http.Request) {
 		// SLA penalties (fixed per incident, simplified)
 		totalEstimate := revLoss + bizLoss + prodLoss + opLoss + penalty
 		out = append(out, map[string]any{
+			"service_id":                 id,
 			"service_name":               name,
 			"criticality":                crit,
 			"downtime_minutes":           downtimeMin,

@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="jet-host" content="{{JET_HOST}}">
+<meta name="form-summary" content="{{FORM_SUMMARY}}">
+<meta name="form-sensors" content="{{FORM_SENSORS}}">
+<meta name="form-incidents" content="{{FORM_INCIDENTS}}">
+<meta name="form-processes" content="{{FORM_PROCESSES}}">
+<meta name="form-services" content="{{FORM_SERVICES}}">
+<title>PRTG BIA Dashboard</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Space+Grotesk:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200">
+<style>
+:root{
+  --color-primary:#0FB0BC; --color-primary-dark:#0D949E; --color-primary-rgb:15,176,188;
+  --color-secondary:#194E95; --color-secondary-dark:#122D5F;
+  --color-bg:#FFFFFF; --color-surface:#F7F8FA; --color-border:#E2E5EB;
+  --color-text:#1A1D26; --color-text-muted:#4A4F5C; --color-placeholder:#6E7380; --color-white:#FFFFFF;
+  --color-danger:#E74C3C; --color-danger-rgb:231,76,60;
+  --chip-neutral-bg:#EEF1F5; --chip-neutral-fg:#4A5568;
+  --chip-good-bg:#E3F5EC; --chip-good-fg:#1B7A54;
+  --chip-warn-bg:#FEF3E2; --chip-warn-fg:#96590B;
+  --chip-bad-bg:#FDECEA; --chip-bad-fg:#B03A2B;
+  --hero-1:#0C1B3A; --hero-3:#194E95; --hero-4:#0D7A83;
+  --font-heading:'Space Grotesk','DM Sans',system-ui,sans-serif;
+  --font-body:'DM Sans',system-ui,-apple-system,sans-serif;
+  --fs-xs:.72rem; --fs-sm:.82rem; --fs-base:.9rem; --fs-md:1rem; --fs-xl:1.25rem;
+  --fs-figure:22px;
+  --fw-medium:500; --fw-semibold:600; --fw-bold:700;
+  --radius-sm:6px; --radius:8px; --radius-md:12px; --radius-pill:999px;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.06);
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px; --space-8:32px;
+  --dur-fast:.15s; --z-sticky:10;
+  --tap:44px; --gutter:20px; --hdr-h:72px;
+  --safe-top:env(safe-area-inset-top,0px); --safe-bottom:env(safe-area-inset-bottom,0px);
+}
+*,*::before,*::after{ box-sizing:border-box; }
+html{ font-size:17px; scrollbar-gutter:stable; scrollbar-width:thin; scrollbar-color:var(--color-border) transparent; }
+[hidden]{ display:none !important; }
+body{ margin:0; font-family:var(--font-body); color:var(--color-text); background:var(--color-surface); line-height:1.5; -webkit-font-smoothing:antialiased; }
+@media (prefers-reduced-motion: reduce){ *,*::before,*::after{ animation-duration:.01ms !important; transition-duration:.01ms !important; } }
+
+.material-symbols-rounded{ font-family:'Material Symbols Rounded'; font-weight:normal; font-style:normal; font-size:20px; line-height:1; flex:none;
+  font-variation-settings:'FILL' 1,'wght' 500,'GRAD' 0,'opsz' 20; }
+
+.wrap{ width:100%; max-width:1440px; margin:0 auto; padding-left:var(--gutter); padding-right:var(--gutter); }
+
+/* App bar */
+.hdr{ position:sticky; top:0; z-index:calc(var(--z-sticky) + 1); color:var(--color-white); padding-top:var(--safe-top);
+  background:linear-gradient(120deg,var(--hero-1) 0%,var(--hero-3) 55%,var(--hero-4) 100%); }
+.hdr-bar{ display:flex; align-items:center; gap:var(--space-3); min-height:var(--hdr-h); }
+.hdr-mark{ width:40px; height:40px; flex:none; border-radius:var(--radius-md); background:rgba(255,255,255,.16); display:flex; align-items:center; justify-content:center; }
+.hdr h1{ font-family:var(--font-heading); font-size:1.35rem; font-weight:var(--fw-bold); letter-spacing:-.02em; margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.hdr-actions{ display:flex; align-items:center; gap:var(--space-2); margin-left:auto; }
+.icon-btn{ width:var(--tap); height:var(--tap); border:0; border-radius:var(--radius); background:rgba(255,255,255,.12); color:var(--color-white);
+  display:inline-flex; align-items:center; justify-content:center; cursor:pointer; transition:background var(--dur-fast); }
+.icon-btn:hover{ background:rgba(255,255,255,.24); }
+.icon-btn:focus-visible{ outline:none; box-shadow:0 0 0 3px rgba(255,255,255,.6); }
+.icon-btn:disabled{ opacity:.6; cursor:not-allowed; }
+.icon-btn[aria-busy="true"] .material-symbols-rounded{ animation:spin 1s linear infinite; }
+@keyframes spin{ to{ transform:rotate(360deg); } }
+
+main{ padding-top:var(--space-5); padding-bottom:calc(var(--space-8) + var(--safe-bottom)); }
+
+/* Toolbar: tabs + freshness */
+.toolbar{ display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; margin-bottom:var(--space-4); }
+.seg{ display:inline-flex; background:var(--color-white); border:1px solid var(--color-border); border-radius:var(--radius); padding:3px; gap:2px; }
+.seg button{ height:calc(var(--tap) - 8px); min-width:var(--tap); padding:0 var(--space-4); border:0; border-radius:var(--radius-sm); background:transparent;
+  font:inherit; font-size:var(--fs-base); font-weight:var(--fw-medium); color:var(--color-text-muted); cursor:pointer; position:relative;
+  transition:background var(--dur-fast),color var(--dur-fast); }
+.seg button::after{ content:''; position:absolute; inset:-4px 0; }
+.seg button:hover{ background:var(--color-surface); color:var(--color-text); }
+.seg button[aria-selected="true"]{ background:var(--color-secondary); color:var(--color-white); }
+.seg button:focus-visible{ outline:2px solid var(--color-primary); outline-offset:2px; }
+.seg .count{ font-weight:var(--fw-semibold); margin-left:6px; opacity:.75; }
+.fresh{ font-size:var(--fs-sm); color:var(--color-text-muted); display:inline-flex; align-items:center; gap:6px; margin-left:auto; }
+.fresh.stale{ color:var(--chip-warn-fg); }
+
+/* Notice */
+.notice{ display:flex; gap:var(--space-3); align-items:flex-start; padding:var(--space-3) var(--space-4); border-radius:var(--radius);
+  background:var(--chip-warn-bg); color:var(--chip-warn-fg); font-size:var(--fs-sm); margin-bottom:var(--space-4); }
+.notice.bad{ background:var(--chip-bad-bg); color:var(--chip-bad-fg); }
+.notice button{ margin-left:auto; }
+
+/* Summary band */
+.stats{ display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:var(--space-3); margin-bottom:var(--space-5); }
+.stat{ background:var(--color-white); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:var(--space-3) var(--space-4); min-width:0; }
+.stat-fig{ font-family:var(--font-heading); font-size:var(--fs-figure); font-weight:var(--fw-semibold); line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums; }
+.stat-fig.alarm{ color:var(--chip-bad-fg); }
+.stat-lbl{ font-size:var(--fs-sm); color:var(--color-text-muted); line-height:1.35; }
+
+/* Section + cards */
+.section-title{ font-family:var(--font-heading); font-size:var(--fs-xl); font-weight:var(--fw-bold); margin:0 0 var(--space-3); }
+.panel{ background:var(--color-white); border:1px solid var(--color-border); border-radius:var(--radius-md); box-shadow:var(--shadow-sm); }
+.procs{ display:grid; grid-template-columns:repeat(auto-fill,minmax(460px,1fr)); gap:var(--space-4); margin-bottom:var(--space-6); }
+.proc{ padding:var(--space-4) var(--space-5); }
+.proc-head{ display:flex; align-items:center; gap:var(--space-3); }
+.proc-name{ font-family:var(--font-heading); font-size:var(--fs-md); font-weight:var(--fw-bold); margin:0; }
+.proc-sub{ font-size:var(--fs-sm); color:var(--color-text-muted); margin-top:2px; }
+.proc-grid{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--space-3); margin:var(--space-4) 0 var(--space-3); }
+.kv-l{ font-size:var(--fs-xs); color:var(--color-text-muted); }
+.kv-v{ font-weight:var(--fw-semibold); font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.comp{ border-top:1px solid var(--color-border); padding-top:var(--space-3); display:flex; flex-direction:column; gap:var(--space-2); }
+.comp-row{ display:flex; gap:var(--space-3); align-items:baseline; font-size:var(--fs-sm); }
+.comp-name{ font-weight:var(--fw-semibold); min-width:90px; }
+.members{ display:flex; flex-wrap:wrap; gap:4px 10px; color:var(--color-text-muted); }
+.member{ display:inline-flex; align-items:center; gap:4px; }
+.member.down-count{ color:var(--chip-bad-fg); }
+.warn-list{ margin:var(--space-3) 0 0; padding:var(--space-2) var(--space-3); list-style:none; background:var(--chip-warn-bg); color:var(--chip-warn-fg);
+  border-radius:var(--radius); font-size:var(--fs-sm); display:flex; flex-direction:column; gap:4px; }
+
+/* Status chip and dot */
+.chip{ display:inline-flex; align-items:center; gap:5px; padding:2px 10px; border-radius:var(--radius-pill); font-size:var(--fs-xs); font-weight:var(--fw-semibold);
+  letter-spacing:.5px; text-transform:uppercase; background:var(--chip-neutral-bg); color:var(--chip-neutral-fg); white-space:nowrap; }
+.chip.up{ background:var(--chip-good-bg); color:var(--chip-good-fg); }
+.chip.warning{ background:var(--chip-warn-bg); color:var(--chip-warn-fg); }
+.chip.down{ background:var(--chip-bad-bg); color:var(--chip-bad-fg); }
+.dot{ width:8px; height:8px; border-radius:50%; background:#94A3B8; flex:none; }
+.dot.up{ background:#259D71; } .dot.warning{ background:#D37F17; } .dot.down{ background:#DE5E4F; } .dot.paused{ background:#94A3B8; }
+
+/* Table */
+.tbl-head{ display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; padding:var(--space-3) var(--space-4); border-bottom:1px solid var(--color-border); }
+.search{ position:relative; flex:1 1 260px; max-width:360px; }
+.search .material-symbols-rounded{ position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--color-placeholder); pointer-events:none; }
+.search input{ width:100%; height:var(--tap); padding:0 var(--space-3) 0 40px; border:1px solid var(--color-border); border-radius:var(--radius);
+  font:inherit; font-size:var(--fs-base); color:var(--color-text); background:var(--color-white); transition:border-color var(--dur-fast); }
+.search input:hover{ border-color:var(--color-text-muted); }
+.search input:focus-visible{ outline:none; border-color:var(--color-primary); box-shadow:0 0 0 3px rgba(var(--color-primary-rgb),.25); }
+.search input::placeholder{ color:var(--color-placeholder); }
+.tbl-wrap{ overflow-x:auto; }
+table.tbl{ width:100%; border-collapse:collapse; font-size:var(--fs-base); }
+.tbl th{ position:sticky; top:0; background:var(--color-white); text-align:left; font-size:var(--fs-sm); font-weight:var(--fw-semibold); color:var(--color-text-muted);
+  padding:var(--space-3) var(--space-4); border-bottom:1px solid var(--color-border); white-space:nowrap; }
+.tbl td{ padding:var(--space-3) var(--space-4); border-bottom:1px solid var(--color-border); height:48px; vertical-align:middle; }
+.tbl tbody tr:hover{ background:var(--color-surface); }
+.tbl tr:last-child td{ border-bottom:0; }
+.tbl .num{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.tbl .muted{ color:var(--color-text-muted); font-size:var(--fs-sm); }
+.tbl .money-bad{ color:var(--chip-bad-fg); font-weight:var(--fw-semibold); }
+.tbl-foot{ padding:var(--space-3) var(--space-4); font-size:var(--fs-sm); color:var(--color-text-muted); border-top:1px solid var(--color-border); }
+
+/* States */
+.state{ padding:var(--space-8) var(--space-4); text-align:center; color:var(--color-text-muted); }
+.state .material-symbols-rounded{ font-size:40px; font-variation-settings:'FILL' 1,'wght' 400,'GRAD' 0,'opsz' 40; color:var(--color-placeholder); display:block; margin:0 auto var(--space-2); }
+.state h3{ font-family:var(--font-heading); color:var(--color-text); margin:0 0 4px; font-size:var(--fs-md); }
+.state p{ margin:0 auto; max-width:52ch; font-size:var(--fs-sm); }
+.skel{ background:linear-gradient(90deg,#EEF1F5 25%,#E2E5EB 50%,#EEF1F5 75%); background-size:200% 100%; animation:shimmer 1.4s infinite; border-radius:var(--radius-md); }
+@keyframes shimmer{ 0%{ background-position:200% 0; } 100%{ background-position:-200% 0; } }
+.btn{ height:var(--tap); padding:0 var(--space-5); border:1px solid var(--color-border); border-radius:var(--radius-sm); background:var(--color-white); color:var(--color-text);
+  font:inherit; font-size:var(--fs-base); font-weight:var(--fw-semibold); cursor:pointer; display:inline-flex; align-items:center; gap:var(--space-2); transition:border-color var(--dur-fast),color var(--dur-fast); }
+.btn:hover{ border-color:var(--color-primary); color:var(--color-primary-dark); }
+.btn:focus-visible{ outline:none; box-shadow:0 0 0 3px rgba(var(--color-primary-rgb),.45); }
+.sr{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+
+/* Loss breakdown inside a process card */
+.bd{ display:flex; flex-wrap:wrap; gap:4px 14px; font-size:var(--fs-sm); color:var(--color-text-muted); border-top:1px solid var(--color-border); padding-top:var(--space-3); margin-top:var(--space-3); }
+.bd b{ color:var(--color-text); font-weight:var(--fw-semibold); }
+.eps{ border-top:1px solid var(--color-border); padding-top:var(--space-3); margin-top:var(--space-3); display:flex; flex-direction:column; gap:6px; font-size:var(--fs-sm); }
+.eps-title{ font-size:var(--fs-xs); color:var(--color-text-muted); }
+.ep{ display:flex; gap:var(--space-3); align-items:baseline; }
+.ep-when{ color:var(--color-text-muted); white-space:nowrap; min-width:118px; }
+.ep-what{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ep-loss{ font-variant-numeric:tabular-nums; white-space:nowrap; font-weight:var(--fw-semibold); }
+.kv-v.bad{ color:var(--chip-bad-fg); }
+
+/* Loss tab */
+/* The 9-column table needs the full width; the simulator sits below it. */
+.loss-grid{ display:grid; grid-template-columns:minmax(0,1fr); gap:var(--space-4); }
+#svc-table td:first-child{ min-width:220px; }
+.sim-inner{ display:grid; grid-template-columns:minmax(0,360px) minmax(0,1fr); gap:var(--space-6); align-items:start; }
+.sim-inner .result{ margin-top:var(--space-4); }
+.panel-title{ font-family:var(--font-heading); font-size:var(--fs-md); font-weight:var(--fw-bold); margin:0; }
+.panel-sub{ font-size:var(--fs-sm); color:var(--color-text-muted); margin-top:2px; }
+.tbl tfoot td{ font-weight:var(--fw-semibold); border-top:1px solid var(--color-border); border-bottom:0; }
+.sim{ padding:var(--space-4) var(--space-5); }
+.field{ display:flex; flex-direction:column; gap:var(--space-1); margin-top:var(--space-4); }
+.field-label{ font-size:var(--fs-sm); font-weight:var(--fw-semibold); color:var(--color-text-muted); }
+.ctl{ width:100%; height:var(--tap); padding:0 var(--space-3); border:1px solid var(--color-border); border-radius:var(--radius); background:var(--color-white);
+  font:inherit; font-size:var(--fs-base); color:var(--color-text); transition:border-color var(--dur-fast); }
+.ctl:hover{ border-color:var(--color-text-muted); }
+.ctl:focus-visible{ outline:none; border-color:var(--color-primary); box-shadow:0 0 0 3px rgba(var(--color-primary-rgb),.25); }
+.ctl[aria-invalid="true"]{ border-color:var(--color-danger); }
+select.ctl{ -webkit-appearance:none; appearance:none; padding-right:36px;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236E7380' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 12px center; }
+.input-suffix{ position:relative; }
+.input-suffix .ctl{ padding-right:56px; text-align:right; font-variant-numeric:tabular-nums; }
+.input-suffix span{ position:absolute; right:12px; top:50%; transform:translateY(-50%); color:var(--color-text-muted); font-size:var(--fs-sm); pointer-events:none; }
+.hint{ font-size:var(--fs-xs); color:var(--color-text-muted); }
+.hint.err{ color:var(--chip-bad-fg); }
+.seg.full{ display:flex; } .seg.full button{ flex:1; }
+.result{ margin-top:var(--space-4); border:1px solid var(--color-border); border-radius:var(--radius); }
+.result-row{ display:flex; justify-content:space-between; gap:var(--space-3); padding:10px var(--space-3); border-bottom:1px solid var(--color-border); font-size:var(--fs-sm); }
+.result-row:last-child{ border-bottom:0; }
+.result-row b{ font-variant-numeric:tabular-nums; font-weight:var(--fw-semibold); }
+.result-row.total{ font-size:var(--fs-base); }
+.result-row.total b{ color:var(--chip-bad-fg); }
+@media (max-width:899px){ .sim-inner{ grid-template-columns:1fr; gap:0; } }
+
+@media (max-width:1100px){ .stats{ grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media (max-width:767px){
+  :root{ --gutter:16px; }
+  .stats{ grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .procs{ grid-template-columns:1fr; }
+  .proc-grid{ grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .fresh{ margin-left:0; width:100%; }
+  /* Four view tabs share the phone width instead of pushing the page wider. */
+  .toolbar > .seg{ display:flex; width:100%; }
+  .toolbar > .seg button{ flex:1 1 0; min-width:0; padding:0 4px; font-size:var(--fs-sm); }
+  .toolbar > .seg .count{ margin-left:3px; }
+  .search{ max-width:none; flex-basis:100%; }
+}
+@media (max-width:599px){
+  .tbl thead{ display:none; }
+  .tbl,.tbl tbody,.tbl tfoot,.tbl tr,.tbl td{ display:block; width:auto; }
+  .tbl tr{ border-bottom:1px solid var(--color-border); padding:var(--space-3) var(--space-4); }
+  .tbl td{ border:0; padding:2px 0; height:auto; text-align:left; }
+  .tbl td.num{ text-align:left; }
+  .tbl td[data-label]::before{ content:attr(data-label) ': '; color:var(--color-text-muted); font-size:var(--fs-sm); }
+  .tbl td.detail{ display:none; }
+}
+</style>
+</head>
+<body>
+<header class="hdr">
+  <div class="hdr-bar wrap">
+    <div class="hdr-mark" aria-hidden="true"><span class="material-symbols-rounded">monitoring</span></div>
+    <h1>PRTG BIA Dashboard</h1>
+    <div class="hdr-actions">
+      <span class="sr" role="status" id="sr-status"></span>
+      <button class="icon-btn" id="refresh" aria-label="Muat ulang data"><span class="material-symbols-rounded">refresh</span></button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap" id="app">
+  <div class="toolbar">
+    <div class="seg" role="tablist" aria-label="Tampilan">
+      <button role="tab" id="tab-overview" aria-selected="true" aria-controls="view-overview">Ringkasan</button>
+      <button role="tab" id="tab-incidents" aria-selected="false" aria-controls="view-incidents">Insiden<span class="count" id="count-incidents"></span></button>
+      <button role="tab" id="tab-sensors" aria-selected="false" aria-controls="view-sensors">Sensor<span class="count" id="count-sensors"></span></button>
+      <button role="tab" id="tab-loss" aria-selected="false" aria-controls="view-loss">Kerugian</button>
+    </div>
+    <span class="fresh" id="fresh" hidden><span class="material-symbols-rounded" aria-hidden="true">schedule</span><span id="fresh-text"></span></span>
+  </div>
+
+  <div class="notice bad" id="error" hidden>
+    <span class="material-symbols-rounded" aria-hidden="true">error</span>
+    <span id="error-text"></span>
+    <button class="btn" id="retry">Coba lagi</button>
+  </div>
+  <div class="notice" id="stale" hidden>
+    <span class="material-symbols-rounded" aria-hidden="true">warning</span>
+    <span id="stale-text"></span>
+  </div>
+
+  <div id="loading">
+    <div class="stats">
+      <div class="skel" style="height:72px"></div><div class="skel" style="height:72px"></div><div class="skel" style="height:72px"></div>
+      <div class="skel" style="height:72px"></div><div class="skel" style="height:72px"></div>
+    </div>
+    <div class="skel" style="height:260px"></div>
+    <p class="state" id="loading-text" hidden></p>
+  </div>
+
+  <div class="panel state" id="empty" hidden>
+    <span class="material-symbols-rounded" aria-hidden="true">cloud_off</span>
+    <h3>Belum ada data dari server dashboard</h3>
+    <p>Data dikirim otomatis oleh service bia-jetsync di VM. Kalau halaman ini tetap kosong setelah 10 menit, periksa apakah service itu berjalan.</p>
+  </div>
+
+  <section id="view-overview" role="tabpanel" aria-labelledby="tab-overview" hidden>
+    <div class="stats" id="stats"></div>
+    <h2 class="section-title">Proses bisnis</h2>
+    <div class="procs" id="procs"></div>
+  </section>
+
+  <section id="view-incidents" role="tabpanel" aria-labelledby="tab-incidents" hidden>
+    <div class="panel">
+      <div class="tbl-head">
+        <div class="seg" role="radiogroup" aria-label="Status insiden" id="inc-filter">
+          <button role="radio" aria-checked="true" aria-selected="true" data-v="open">Aktif</button>
+          <button role="radio" aria-checked="false" aria-selected="false" data-v="all">Semua</button>
+        </div>
+      </div>
+      <div class="tbl-wrap"><table class="tbl" id="inc-table">
+        <thead><tr><th>Severity</th><th>Service</th><th>Sensor</th><th>Status</th><th>Mulai</th><th class="num">Durasi</th><th class="num">Dampak</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <div class="state" id="inc-empty" hidden><span class="material-symbols-rounded" aria-hidden="true">check_circle</span><h3>Tidak ada insiden aktif</h3><p>Semua sensor yang terhubung ke business service sedang normal.</p></div>
+      <div class="tbl-foot" id="inc-foot"></div>
+    </div>
+  </section>
+
+  <section id="view-sensors" role="tabpanel" aria-labelledby="tab-sensors" hidden>
+    <div class="panel">
+      <div class="tbl-head">
+        <label class="search"><span class="material-symbols-rounded" aria-hidden="true">search</span>
+          <span class="sr">Cari sensor</span><input id="sensor-q" type="search" placeholder="Cari device atau sensor" autocomplete="off"></label>
+        <div class="seg" role="radiogroup" aria-label="Status sensor" id="sensor-filter">
+          <button role="radio" aria-checked="true" aria-selected="true" data-v="problem">Bermasalah</button>
+          <button role="radio" aria-checked="false" aria-selected="false" data-v="all">Semua</button>
+          <button role="radio" aria-checked="false" aria-selected="false" data-v="unknown">Unknown</button>
+        </div>
+      </div>
+      <div class="tbl-wrap"><table class="tbl" id="sensor-table">
+        <thead><tr><th>Status</th><th>Device</th><th>Sensor</th><th class="num">ID PRTG</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <div class="state" id="sensor-empty" hidden><span class="material-symbols-rounded" aria-hidden="true">search_off</span><h3>Tidak ada sensor yang cocok</h3><p>Ubah kata kunci atau pilih filter lain.</p></div>
+      <div class="tbl-foot" id="sensor-foot"></div>
+    </div>
+  </section>
+
+  <section id="view-loss" role="tabpanel" aria-labelledby="tab-loss" hidden>
+    <div class="loss-grid">
+      <div class="panel">
+        <div class="tbl-head" style="display:block">
+          <h2 class="panel-title">Kerugian per business service, bulan ini</h2>
+          <div class="panel-sub">Dihitung di server dashboard dengan rumus yang sama seperti halaman Business Impact Analysis.</div>
+        </div>
+        <div class="tbl-wrap"><table class="tbl" id="svc-table">
+          <thead><tr><th>Service</th><th class="num">Downtime</th><th class="num">Revenue</th><th class="num">Nilai bisnis</th><th class="num">Produktivitas</th><th class="num">Operasional</th><th class="num">Penalti SLA</th><th class="num">Total</th><th>SLA</th></tr></thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table></div>
+        <div class="state" id="svc-empty" hidden><span class="material-symbols-rounded" aria-hidden="true">cloud_sync</span><h3>Data kerugian per service belum masuk</h3><p>Data ini dikirim oleh service bia-jetsync versi terbaru di VM. Perbarui jetsync di VM, lalu tunggu satu siklus sinkronisasi.</p></div>
+      </div>
+
+      <div class="panel sim" id="sim">
+        <h2 class="panel-title">Simulasi dampak</h2>
+        <div class="panel-sub">Perkiraan kerugian jika proses bisnis terganggu selama durasi tertentu, memakai tarif yang sama dengan dashboard VM.</div>
+        <div id="sim-body" class="sim-inner"><div>
+          <label class="field"><span class="field-label">Proses bisnis</span><select class="ctl" id="sim-proc"></select></label>
+          <label class="field"><span class="field-label">Durasi gangguan</span>
+            <span class="input-suffix"><input class="ctl" id="sim-hours" inputmode="decimal" autocomplete="off" value="1"><span>jam</span></span>
+            <span class="hint" id="sim-hint">Contoh: 0,5 untuk 30 menit</span></label>
+          <div class="field"><span class="field-label" id="sim-mode-lbl">Kondisi</span>
+            <div class="seg full" role="radiogroup" aria-labelledby="sim-mode-lbl" id="sim-mode">
+              <button role="radio" aria-checked="true" aria-selected="true" data-v="down">Down</button>
+              <button role="radio" aria-checked="false" aria-selected="false" data-v="warning" id="sim-warn-btn">Warning</button>
+            </div></div>
+          </div>
+          <div class="result" id="sim-result" aria-live="polite"></div>
+        </div>
+        <div class="state" id="sim-empty" hidden><p>Belum ada proses bisnis yang terhubung ke business service dengan tarif kerugian. Hubungkan prosesnya di dashboard VM.</p></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  function meta(n) { var el = document.querySelector('meta[name="' + n + '"]'); return el ? el.content : ''; }
+  var HOST = meta('jet-host');
+  var FORMS = { summary: meta('form-summary'), sensors: meta('form-sensors'), incidents: meta('form-incidents'), processes: meta('form-processes'), services: meta('form-services') };
+  var VIEWS = ['overview', 'incidents', 'sensors', 'loss'];
+  var STALE_MIN = 30;
+  var money = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 });
+  // Summary tiles use the compact form ("Rp 14,1 jt") so a figure never truncates; the full value is in the title.
+  var moneyShort = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', notation: 'compact', maximumFractionDigits: 1 });
+  var $ = function (id) { return document.getElementById(id); };
+  var data = null;
+  var view = 'overview', incFilter = 'open', sensorFilter = 'problem', simMode = 'down', simProc = '';
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function n(v) { var x = parseFloat(v); return isFinite(x) ? x : 0; }
+  function fmtDur(min) {
+    min = Math.round(n(min));
+    if (min < 1) return '< 1 mnt';
+    var d = Math.floor(min / 1440), h = Math.floor((min % 1440) / 60), m = min % 60;
+    if (d) return d + ' hari ' + h + ' jam';
+    if (h) return h + ' jam ' + m + ' mnt';
+    return m + ' mnt';
+  }
+  function fmtTime(iso) {
+    if (!iso) return '';
+    var t = new Date(iso);
+    return isNaN(t) ? iso : t.toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+  }
+  function ago(iso) {
+    var s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (!isFinite(s)) return '';
+    if (s < 90) return 'baru saja';
+    if (s < 3600) return Math.round(s / 60) + ' menit lalu';
+    if (s < 86400) return Math.round(s / 3600) + ' jam lalu';
+    return Math.round(s / 86400) + ' hari lalu';
+  }
+  var STATE_LABEL = { up: 'Up', warning: 'Warning', down: 'Down', unknown: 'Unknown', paused: 'Paused' };
+  function chip(state) { var s = (state || 'unknown').toLowerCase(); return '<span class="chip ' + esc(s) + '">' + esc(STATE_LABEL[s] || s) + '</span>'; }
+  function sevChip(sev) {
+    var cls = sev === 'CRITICAL' ? 'down' : (sev === 'MAJOR' || sev === 'MINOR' || sev === 'WARNING') ? 'warning' : '';
+    return '<span class="chip ' + cls + '">' + esc(sev) + '</span>';
+  }
+
+  // JET V3 call with the session JET injects into custom forms.
+  async function jet(method, params) {
+    var fd = new FormData();
+    fd.append('method', method);
+    fd.append('project', window.project);
+    fd.append('session_key', window.session_key);
+    Object.keys(params || {}).forEach(function (k) { fd.append(k, params[k]); });
+    var r = await fetch(HOST + '/api_v3/api.php', { method: 'POST', body: fd });
+    var j = await r.json();
+    if (j.status !== 'success') throw new Error(j.message || ('JET ' + method + ' gagal'));
+    return j;
+  }
+  async function rows(form) {
+    var out = [];
+    for (var offset = 0; ; offset += 1000) {
+      var j = await jet('getRecords', { id_form: form, limit: 1000, offset: offset });
+      out = out.concat(j.data || []);
+      if (!j.truncated || !(j.data || []).length) return out;
+    }
+  }
+
+  // Loading escalates so a slow read never looks like a dead page.
+  function startLoading() {
+    var lt = $('loading-text');
+    $('refresh').setAttribute('aria-busy', 'true');
+    $('refresh').disabled = true;
+    var t1 = setTimeout(function () { lt.hidden = false; lt.textContent = 'Memuat data dashboard'; }, 1000);
+    var t2 = setTimeout(function () { lt.textContent = 'Masih memuat. Data dari JETData bisa butuh sekitar lima belas detik.'; $('sr-status').textContent = lt.textContent; }, 4000);
+    return function () { clearTimeout(t1); clearTimeout(t2); lt.hidden = true; $('refresh').removeAttribute('aria-busy'); $('refresh').disabled = false; };
+  }
+
+  async function load() {
+    var stop = startLoading();
+    $('error').hidden = true;
+    try {
+      if (!window.session_key) throw new Error('Halaman ini harus dibuka dari dalam aplikasi JETData.');
+      // Service impact is optional: older jetsync versions do not send it.
+      var services = /^\d+$/.test(FORMS.services) ? rows(FORMS.services).catch(function () { return []; }) : Promise.resolve([]);
+      var res = await Promise.all([rows(FORMS.summary), rows(FORMS.sensors), rows(FORMS.incidents), rows(FORMS.processes), services]);
+      data = { summary: res[0][0] || null, sensors: res[1], incidents: res[2], processes: res[3], services: res[4] };
+      $('sr-status').textContent = 'Data dimuat';
+    } catch (e) {
+      $('error-text').textContent = 'Data tidak bisa dimuat dari JETData: ' + (e && e.message ? e.message : e) + '. Periksa koneksi lalu coba lagi.';
+      $('error').hidden = false;
+    } finally {
+      stop();
+      $('loading').hidden = true;
+      render();
+    }
+  }
+
+  function render() {
+    var has = !!(data && data.summary);
+    $('empty').hidden = has || !$('error').hidden;
+    VIEWS.forEach(function (v) {
+      $('view-' + v).hidden = !has || view !== v;
+      $('tab-' + v).setAttribute('aria-selected', String(view === v));
+    });
+    if (!has) return;
+    var s = data.summary;
+    var fresh = $('fresh');
+    fresh.hidden = false;
+    $('fresh-text').textContent = 'Data dari VM ' + ago(s.Synced_At);
+    var staleMin = (Date.now() - new Date(s.Synced_At).getTime()) / 60000;
+    var isStale = isFinite(staleMin) && staleMin > STALE_MIN;
+    fresh.classList.toggle('stale', isStale);
+    $('stale').hidden = !isStale;
+    if (isStale) $('stale-text').textContent = 'Data terakhir masuk ' + ago(s.Synced_At) + ' (' + fmtTime(s.Synced_At) + '). Server dashboard atau koneksinya ke internet mungkin sedang terputus, jadi angka di bawah adalah kondisi terakhir yang diketahui.';
+    var openInc = data.incidents.filter(function (i) { return i.Status === 'OPEN' || i.Status === 'ACKNOWLEDGED'; });
+    $('count-incidents').textContent = openInc.length || '';
+    var problem = data.sensors.filter(function (x) { return x.Status === 'down' || x.Status === 'warning'; });
+    $('count-sensors').textContent = problem.length || '';
+    if (view === 'overview') renderOverview(s);
+    if (view === 'incidents') renderIncidents();
+    if (view === 'sensors') renderSensors();
+    if (view === 'loss') renderLoss();
+  }
+
+  function renderOverview(s) {
+    var tiles = [
+      { fig: n(s.Sensors_Down) + ' / ' + n(s.Sensors_Total), lbl: 'Sensor down', alarm: n(s.Sensors_Down) > 0 },
+      { fig: n(s.Open_Incidents), lbl: 'Insiden aktif, ' + n(s.Critical_Open) + ' critical', alarm: n(s.Critical_Open) > 0 },
+      { fig: moneyShort.format(n(s.BP_Loss_Per_Hour)) + '/jam', full: money.format(n(s.BP_Loss_Per_Hour)) + ' per jam', lbl: 'Kerugian berjalan', alarm: n(s.BP_Loss_Per_Hour) > 0 },
+      { fig: moneyShort.format(n(s.BP_Loss_MTD)), full: money.format(n(s.BP_Loss_MTD)), lbl: 'Kerugian proses bisnis bulan ini' },
+      { fig: s.BP_Availability_Pct ? n(s.BP_Availability_Pct).toFixed(2) + '%' : '-', lbl: 'Availability proses bisnis' }
+    ];
+    $('stats').innerHTML = tiles.map(function (t) {
+      return '<div class="stat"><div class="stat-fig' + (t.alarm ? ' alarm' : '') + '" title="' + esc(t.full || t.fig) + '">' + esc(t.fig) + '</div><div class="stat-lbl">' + esc(t.lbl) + '</div></div>';
+    }).join('');
+
+    if (!data.processes.length) {
+      $('procs').innerHTML = '<div class="panel state"><span class="material-symbols-rounded" aria-hidden="true">account_tree</span><h3>Belum ada proses bisnis</h3><p>Buat sensor bertipe Business Process di PRTG. Proses itu akan muncul di sini pada sinkronisasi berikutnya.</p></div>';
+      return;
+    }
+    var order = { down: 0, warning: 1, unknown: 2, up: 3 };
+    var procs = data.processes.slice().sort(function (a, b) { return (order[a.State] || 0) - (order[b.State] || 0); });
+    $('procs').innerHTML = procs.map(procCard).join('');
+  }
+
+  function procCard(p) {
+    var comps = [];
+    try { comps = JSON.parse(p.Components_JSON || '[]') || []; } catch (e) { comps = []; }
+    var warnings = (p.Warnings || '').split('\n').filter(Boolean);
+    var notUp = p.State === 'down' || p.State === 'warning';
+    var sub = p.Service ? esc(p.Service) + (p.Criticality ? ' · ' + esc(p.Criticality) : '') : 'Belum terhubung ke business service';
+    var current = notUp && p.Current_Since
+      ? '<div><div class="kv-l">' + esc(STATE_LABEL[p.State]) + ' sejak</div><div class="kv-v">' + esc(fmtTime(p.Current_Since)) + '</div></div>'
+      : '<div><div class="kv-l">Gangguan bulan ini</div><div class="kv-v">' + n(p.Outages) + '</div></div>';
+    var availLbl = p.SLA_Target_Pct ? 'Availability / target' : 'Availability';
+    var availVal = n(p.Availability_Pct).toFixed(2) + '%' + (p.SLA_Target_Pct ? ' / ' + n(p.SLA_Target_Pct) + '%' : '');
+    return '<article class="panel proc">' +
+      '<div class="proc-head"><div style="min-width:0;flex:1"><h3 class="proc-name">' + esc(p.Process_Name) + '</h3><div class="proc-sub">' + sub + '</div></div>' + chip(p.State) + '</div>' +
+      '<div class="proc-grid">' +
+        current +
+        '<div><div class="kv-l">Kerugian berjalan</div><div class="kv-v">' + money.format(n(p.Loss_Per_Hour)) + '/jam</div></div>' +
+        '<div><div class="kv-l">Kerugian bulan ini</div><div class="kv-v">' + money.format(n(p.Loss_MTD)) + '</div></div>' +
+        '<div><div class="kv-l">' + availLbl + '</div><div class="kv-v">' + availVal + '</div></div>' +
+        '<div><div class="kv-l">Downtime bulan ini</div><div class="kv-v">' + fmtDur(p.Downtime_Min) + '</div></div>' +
+        (p.State === 'down' && p.RTO_Remaining_Min !== undefined && p.RTO_Remaining_Min !== ''
+          ? (n(p.RTO_Remaining_Min) >= 0
+            ? '<div><div class="kv-l">Sisa waktu sebelum RTO</div><div class="kv-v">' + fmtDur(p.RTO_Remaining_Min) + '</div></div>'
+            : '<div><div class="kv-l">RTO terlewati</div><div class="kv-v bad">' + fmtDur(-n(p.RTO_Remaining_Min)) + ', kena penalti</div></div>')
+          : '<div><div class="kv-l">Uptime menurut PRTG</div><div class="kv-v">' + (p.PRTG_Uptime_Pct ? n(p.PRTG_Uptime_Pct).toFixed(2) + '%' : '-') + '</div></div>') +
+      '</div>' +
+      lossBreakdown(p) + recentDisruptions(p) +
+      (comps.length ? '<div class="comp">' + comps.map(function (c) {
+        return '<div class="comp-row"><span class="comp-name">' + esc(c.name) + '</span>' + chip(c.state) +
+          '<span class="members">' + (c.members || []).map(function (m) {
+            return '<span class="member' + (m.u ? '' : ' down-count') + '" title="' + esc(m.n + (m.p ? ' @ ' + m.p : '') + ': ' + (STATE_LABEL[m.s] || m.s) + (m.u ? '' : ', dihitung Down oleh PRTG')) + '"><span class="dot ' + esc(m.s) + '"></span>' + esc(m.n) + (m.p ? ' @ ' + esc(m.p) : '') + '</span>';
+          }).join('') + '</span></div>';
+      }).join('') + '</div>' : '') +
+      (warnings.length ? '<ul class="warn-list">' + warnings.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>' : '') +
+    '</article>';
+  }
+
+  function lossBreakdown(p) {
+    if (!(n(p.Loss_MTD) > 0) || p.Loss_Revenue_MTD === undefined) return '';
+    var parts = [['Revenue', p.Loss_Revenue_MTD], ['Produktivitas', p.Loss_Productivity_MTD], ['Operasional', p.Loss_Operational_MTD],
+      ['Recovery', p.Loss_Recovery_MTD], ['Penalti SLA', p.Loss_Penalty_MTD]];
+    return '<div class="bd"><span>Rincian bulan ini</span>' + parts.map(function (x) { return '<span>' + x[0] + ' <b>' + money.format(n(x[1])) + '</b></span>'; }).join('') + '</div>';
+  }
+
+  function recentDisruptions(p) {
+    var eps = [];
+    try { eps = JSON.parse(p.Episodes_JSON || '[]') || []; } catch (e) { eps = []; }
+    if (!eps.length) return '';
+    return '<div class="eps"><div class="eps-title">Gangguan terakhir</div>' + eps.slice(0, 3).map(function (e) {
+      var what = (STATE_LABEL[e.worst] || e.worst) + ' ' + fmtDur(n(e.duration_s) / 60) + (e.causes ? ', penyebab ' + e.causes : '') + (e.ongoing ? ', masih berlangsung' : '');
+      return '<div class="ep"><span class="ep-when">' + esc(fmtTime(e.start)) + '</span><span class="ep-what" title="' + esc(what) + '">' + esc(what) + '</span><span class="ep-loss">' + money.format(n(e.loss)) + '</span></div>';
+    }).join('') + '</div>';
+  }
+
+  function renderIncidents() {
+    var list = data.incidents.filter(function (i) { return incFilter === 'all' || i.Status === 'OPEN' || i.Status === 'ACKNOWLEDGED'; });
+    list.sort(function (a, b) { return new Date(b.Started_At) - new Date(a.Started_At); });
+    $('inc-table').hidden = !list.length;
+    $('inc-empty').hidden = !!list.length;
+    $('inc-table').querySelector('tbody').innerHTML = list.map(function (i) {
+      return '<tr>' +
+        '<td data-label="Severity">' + sevChip(i.Severity) + '</td>' +
+        '<td data-label="Service"><strong>' + esc(i.Service) + '</strong>' + (i.Criticality ? ' <span class="muted">' + esc(i.Criticality) + '</span>' : '') + '</td>' +
+        '<td data-label="Sensor">' + esc(i.Sensor) + ' <span class="muted">@ ' + esc(i.Device) + '</span></td>' +
+        '<td data-label="Status" class="detail">' + esc(i.Status.charAt(0) + i.Status.slice(1).toLowerCase()) + '</td>' +
+        '<td data-label="Mulai" class="detail">' + esc(fmtTime(i.Started_At)) + '</td>' +
+        '<td data-label="Durasi" class="num">' + fmtDur(i.Duration_Min) + '</td>' +
+        '<td data-label="Dampak" class="num' + (n(i.Impact_IDR) > 0 ? ' money-bad' : '') + '">' + money.format(n(i.Impact_IDR)) + '</td>' +
+      '</tr>';
+    }).join('');
+    $('inc-foot').textContent = (incFilter === 'all' ? list.length + ' insiden terbaru (maksimal 100).' : list.length + ' insiden aktif.') + ' Dampak finansial dihitung setelah insiden selesai.';
+  }
+
+  function renderSensors() {
+    var q = $('sensor-q').value.trim().toLowerCase();
+    var list = data.sensors.filter(function (x) {
+      if (sensorFilter === 'problem' && x.Status !== 'down' && x.Status !== 'warning') return false;
+      if (sensorFilter === 'unknown' && x.Status !== 'unknown') return false;
+      return !q || (x.Device + ' ' + x.Sensor + ' ' + x.PRTG_Sensor_ID).toLowerCase().indexOf(q) >= 0;
+    });
+    var order = { down: 0, warning: 1, unknown: 2, up: 3 };
+    list.sort(function (a, b) { return (order[a.Status] || 0) - (order[b.Status] || 0) || String(a.Device).localeCompare(b.Device); });
+    $('sensor-table').hidden = !list.length;
+    $('sensor-empty').hidden = !!list.length;
+    $('sensor-table').querySelector('tbody').innerHTML = list.map(function (x) {
+      return '<tr><td data-label="Status">' + chip(x.Status) + '</td><td data-label="Device"><strong>' + esc(x.Device) + '</strong></td>' +
+        '<td data-label="Sensor">' + esc(x.Sensor) + '</td><td data-label="ID PRTG" class="num detail">' + esc(x.PRTG_Sensor_ID) + '</td></tr>';
+    }).join('');
+    $('sensor-foot').textContent = list.length + ' dari ' + data.sensors.length + ' sensor.';
+  }
+
+  // A process has loss rates once jetsync sends them and it is linked to a priced service.
+  function hasRates(p) { return p.Service && (n(p.Revenue_Per_Hour) + n(p.Productivity_Per_Hour) + n(p.Operational_Per_Hour)) > 0; }
+
+  function renderLoss() {
+    var svcs = (data.services || []).slice().sort(function (a, b) { return n(b.Total_Loss) - n(a.Total_Loss) || String(a.Service_Name).localeCompare(b.Service_Name); });
+    $('svc-table').hidden = !svcs.length;
+    $('svc-empty').hidden = !!svcs.length;
+    // Two services may share a name; a short id tells them apart.
+    var nameCount = {};
+    svcs.forEach(function (x) { nameCount[x.Service_Name] = (nameCount[x.Service_Name] || 0) + 1; });
+    var tot = { dt: 0, rev: 0, bv: 0, prod: 0, op: 0, pen: 0, all: 0 };
+    $('svc-table').querySelector('tbody').innerHTML = svcs.map(function (x) {
+      tot.dt += n(x.Downtime_Min); tot.rev += n(x.Revenue_Loss); tot.bv += n(x.Business_Value_Loss); tot.prod += n(x.Productivity_Loss);
+      tot.op += n(x.Operational_Loss); tot.pen += n(x.SLA_Penalty); tot.all += n(x.Total_Loss);
+      var dup = nameCount[x.Service_Name] > 1 ? ' <span class="muted">#' + esc(String(x.Service_ID).slice(0, 8)) + '</span>' : '';
+      var slaCls = x.SLA_Status === 'breached' ? 'down' : x.SLA_Status === 'at_risk' ? 'warning' : x.SLA_Status ? 'up' : '';
+      var slaTxt = { breached: 'Terlampaui', at_risk: 'Berisiko', healthy: 'Aman' }[x.SLA_Status] || '-';
+      return '<tr>' +
+        '<td data-label="Service"><strong>' + esc(x.Service_Name) + '</strong>' + dup + (x.Criticality ? ' <span class="muted">' + esc(x.Criticality) + '</span>' : '') + '</td>' +
+        '<td data-label="Downtime" class="num">' + (n(x.Downtime_Min) ? fmtDur(x.Downtime_Min) : '-') + '</td>' +
+        '<td data-label="Revenue" class="num detail">' + money.format(n(x.Revenue_Loss)) + '</td>' +
+        '<td data-label="Nilai bisnis" class="num detail">' + money.format(n(x.Business_Value_Loss)) + '</td>' +
+        '<td data-label="Produktivitas" class="num detail">' + money.format(n(x.Productivity_Loss)) + '</td>' +
+        '<td data-label="Operasional" class="num detail">' + money.format(n(x.Operational_Loss)) + '</td>' +
+        '<td data-label="Penalti SLA" class="num detail">' + money.format(n(x.SLA_Penalty)) + '</td>' +
+        '<td data-label="Total" class="num' + (n(x.Total_Loss) > 0 ? ' money-bad' : '') + '">' + money.format(n(x.Total_Loss)) + '</td>' +
+        '<td data-label="SLA"><span class="chip ' + slaCls + '" title="' + esc(x.Availability_Pct ? 'Availability ' + n(x.Availability_Pct).toFixed(3) + '% dari target ' + n(x.SLA_Target_Pct) + '%' : '') + '">' + esc(slaTxt) + '</span></td>' +
+      '</tr>';
+    }).join('');
+    $('svc-table').querySelector('tfoot').innerHTML = svcs.length ? '<tr><td><strong>Total semua service</strong></td><td data-label="Downtime" class="num">' + (tot.dt ? fmtDur(tot.dt) : '-') + '</td>' +
+      '<td class="num detail">' + money.format(tot.rev) + '</td><td class="num detail">' + money.format(tot.bv) + '</td><td class="num detail">' + money.format(tot.prod) + '</td>' +
+      '<td class="num detail">' + money.format(tot.op) + '</td><td class="num detail">' + money.format(tot.pen) + '</td><td data-label="Total" class="num money-bad">' + money.format(tot.all) + '</td><td class="detail"></td></tr>' : '';
+
+    var priced = data.processes.filter(hasRates);
+    $('sim-body').hidden = !priced.length;
+    $('sim-empty').hidden = !!priced.length;
+    if (!priced.length) return;
+    if (!priced.some(function (p) { return p.PRTG_Sensor_ID === simProc; })) simProc = priced[0].PRTG_Sensor_ID;
+    var sel = $('sim-proc');
+    sel.innerHTML = priced.map(function (p) { return '<option value="' + esc(p.PRTG_Sensor_ID) + '"' + (p.PRTG_Sensor_ID === simProc ? ' selected' : '') + '>' + esc(p.Process_Name + ' (' + p.Service + ')') + '</option>'; }).join('');
+    renderSim();
+  }
+
+  // Same formula as the dashboard's simulator: hourly losses for the
+  // duration (scaled while degraded), recovery once if it went down, and
+  // the SLA penalty when downtime runs past the service's RTO.
+  function renderSim() {
+    var p = data.processes.filter(function (x) { return x.PRTG_Sensor_ID === simProc; })[0];
+    if (!p) return;
+    var raw = $('sim-hours').value.trim().replace(',', '.');
+    var hours = parseFloat(raw);
+    var valid = raw !== '' && isFinite(hours) && hours >= 0 && hours <= 8760;
+    $('sim-hours').setAttribute('aria-invalid', String(!valid));
+    $('sim-hint').classList.toggle('err', !valid);
+    $('sim-hint').textContent = valid ? 'Contoh: 0,5 untuk 30 menit' : 'Isi angka jam antara 0 dan 8760.';
+    var factor = n(p.Degraded_Impact_Pct) / 100;
+    $('sim-warn-btn').textContent = 'Warning (' + Math.round(factor * 100) + '%)';
+    if (!valid) hours = 0;
+    var k = simMode === 'down' ? 1 : factor;
+    var rev = n(p.Revenue_Per_Hour) * hours * k, prod = n(p.Productivity_Per_Hour) * hours * k, op = n(p.Operational_Per_Hour) * hours * k;
+    var rec = simMode === 'down' && hours > 0 ? n(p.Recovery_Fixed) : 0;
+    var rto = n(p.RTO_Min);
+    var pen = simMode === 'down' && rto > 0 && hours * 60 > rto ? n(p.Penalty_Fixed) : 0;
+    var rows = [
+      ['Revenue hilang', rev], ['Produktivitas karyawan', prod], ['Biaya operasional', op],
+      ['Biaya recovery', rec], ['Penalti SLA' + (rto ? ' (jika lebih dari RTO ' + rto + ' menit)' : ''), pen]
+    ];
+    $('sim-result').innerHTML = rows.map(function (r) { return '<div class="result-row"><span>' + esc(r[0]) + '</span><b>' + money.format(r[1]) + '</b></div>'; }).join('') +
+      '<div class="result-row total"><span>Total</span><b>' + money.format(rev + prod + op + rec + pen) + '</b></div>';
+  }
+
+  function bindSeg(id, set) {
+    $(id).addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      $(id).querySelectorAll('button').forEach(function (x) { var on = x === b; x.setAttribute('aria-checked', String(on)); x.setAttribute('aria-selected', String(on)); });
+      set(b.getAttribute('data-v')); render();
+    });
+  }
+  VIEWS.forEach(function (v) {
+    $('tab-' + v).addEventListener('click', function () { view = v; render(); });
+  });
+  bindSeg('sim-mode', function (v) { simMode = v; });
+  $('sim-proc').addEventListener('change', function () { simProc = this.value; renderSim(); });
+  $('sim-hours').addEventListener('input', renderSim);
+  bindSeg('inc-filter', function (v) { incFilter = v; });
+  bindSeg('sensor-filter', function (v) { sensorFilter = v; });
+  $('sensor-q').addEventListener('input', function () { render(); });
+  $('refresh').addEventListener('click', load);
+  $('retry').addEventListener('click', load);
+
+  // This page has no overlays, so the JET back control simply leaves the form.
+  window.active_function = 'prtgBiaBack';
+  window.prtgBiaBack = function () { return false; };
+
+  setInterval(function () { if (data && data.summary) render(); }, 60000); // keep "x menit lalu" current
+  load();
+})();
+</script>
+</body>
+</html>

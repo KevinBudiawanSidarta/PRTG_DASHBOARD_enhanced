@@ -1,4 +1,4 @@
-.PHONY: db api collector worker scheduler web test
+.PHONY: db api collector worker scheduler jetsync web test
 
 db:
 	docker compose up -d postgres
@@ -10,6 +10,8 @@ worker:
 	go run ./services/worker/cmd
 scheduler:
 	go run ./services/scheduler/cmd
+jetsync:
+	go run ./services/jetsync/cmd
 web:
 	cd apps/web && npm install && npm run dev
 test:
